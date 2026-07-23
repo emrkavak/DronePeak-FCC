@@ -1,8 +1,10 @@
 package com.dronepeak.app
 
 import android.app.Application
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -16,6 +18,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.io.File
+import java.security.MessageDigest
 import java.util.Date
 import java.util.Locale
 
@@ -26,6 +30,15 @@ import java.util.Locale
  * with collectAsStateWithLifecycle(). Every field here represents something
  * the UI needs to render.
  */
+enum class UpdateStage {
+    NONE,
+    DOWNLOADING,
+    READY,
+    NEEDS_INSTALL_PERMISSION,
+    INSTALLER_OPEN,
+    FAILED
+}
+
 data class AppState(
     val language: AppLanguage = AppLanguage.TR,
     val status: String = "idle",
@@ -52,6 +65,7 @@ data class AppState(
     val updateDownloadProgress: Float = 0f,
     val isUpdateDownloaded: Boolean = false,
     val profileUpdateMessage: String = "",
+    val updateStage: UpdateStage = UpdateStage.NONE,
     val updateAvailable: Boolean = false,
     val updateChecked: Boolean = false,
     // Keepalive state
@@ -71,7 +85,7 @@ data class AppState(
 class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     companion object {
-        const val APP_VERSION = "1.5.3-dp.3"
+        const val APP_VERSION = "1.5.3-dp.4"
 
         /**
          * Aircraft model codes known to support DJI Cellular Dongle 2 / 4G.
@@ -93,6 +107,10 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private val transport = DumlTransport()
     private val prefs = app.getSharedPreferences("dronepeak", Context.MODE_PRIVATE)
+    private val updateDownloadIdKey = "update_download_id"
+    private val updateApkPathKey = "update_apk_path"
+    private val updateVersionKey = "update_version"
+    private val updateSha256Key = "update_sha256"
     private val text: UiText
         get() = TextCatalog.ui(_state.value.language)
 
@@ -111,6 +129,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         if (cachedSerial.isNotEmpty()) {
             update { copy(aircraftSerial = cachedSerial) }
         }
+        restorePendingUpdate()
     }
 
     /** Claims the shared hardware lock for one operation. Returns false if another (including the keepalive service) is already running. */
@@ -139,6 +158,11 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         }
 
         checkForUpdates()
+    }
+
+    /** Refreshes persistent DownloadManager state when returning from Android Settings or installer. */
+    fun onAppResumed() {
+        restorePendingUpdate()
     }
 
     // --- Auto-FCC ---
@@ -783,35 +807,12 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private var downloadedApk: java.io.File? = null
-
-    /**
-     * Checks if the app can install packages. If not, opens the system
-     * Settings page for "Install unknown apps" so the user can grant it.
-     * Returns true if permission is already granted (proceed with download),
-     * false if we opened Settings (user needs to grant, then tap Download again).
-     */
-    fun ensureInstallPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || app.packageManager.canRequestPackageInstalls()) {
-            true
-        } else {
-            val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                data = Uri.parse("package:${app.packageName}")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            app.startActivity(intent)
-            log(if (_state.value.language == AppLanguage.TR) "APK kurulumu için DronePeak-FCC'ye izin ver, sonra indirmeyi tekrar başlat." else "Allow DronePeak-FCC to install APKs, then start the download again.")
-            false
-        }
-    }
-
     fun downloadUpdate() {
-        downloadedApk = null
         val info = _state.value.updateInfo ?: run {
             log(if (_state.value.language == AppLanguage.TR) "Önce DronePeak-FCC güncelleme kontrolü yap." else "Check DronePeak-FCC updates first.")
             return
         }
-        if (_state.value.isDownloadingUpdate) return
+        if (_state.value.updateStage == UpdateStage.DOWNLOADING) return
         if (info.downloadUrl.isBlank()) {
             update {
                 copy(
@@ -825,53 +826,33 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             log(if (_state.value.language == AppLanguage.TR) "Güncelleme APK'sı bulunamadı." else "Update APK missing.")
             return
         }
-        if (!ensureInstallPermission()) return
         val language = _state.value.language
+        clearPendingUpdate(removeDownload = true)
+        val download = UpdateChecker.startApkDownload(app, info)
+        if (download == null) {
+            update {
+                copy(
+                    isDownloadingUpdate = false,
+                    isUpdateDownloaded = false,
+                    updateStage = UpdateStage.FAILED,
+                    profileUpdateMessage = updateMessage("download_failed", language)
+                )
+            }
+            log(if (language == AppLanguage.TR) "Güncelleme indirme başlatılamadı" else "Could not start update download")
+            return
+        }
+        persistPendingUpdate(download.first, download.second, info)
         update {
             copy(
                 isDownloadingUpdate = true,
                 updateDownloadProgress = 0f,
                 isUpdateDownloaded = false,
+                updateStage = UpdateStage.DOWNLOADING,
                 profileUpdateMessage = if (language == AppLanguage.TR) "Güncelleme indiriliyor..." else "Downloading update..."
             )
         }
-        log(if (language == AppLanguage.TR) "DronePeak-FCC güncellemesi indiriliyor..." else "Downloading DronePeak-FCC update...")
-
-        runOnIO {
-            val apk = UpdateChecker.downloadApk(app, info) { progress ->
-                update { copy(updateDownloadProgress = progress) }
-            }
-            downloadedApk = apk
-            if (apk != null) {
-                update {
-                    copy(
-                        isDownloadingUpdate = false,
-                        updateDownloadProgress = 1f,
-                        isUpdateDownloaded = true,
-                        profileUpdateMessage = if (language == AppLanguage.TR) {
-                            "Güncelleme indirildi. Kurulumu başlatabilirsin."
-                        } else {
-                            "Update downloaded. You can start installation."
-                        }
-                    )
-                }
-                log(if (language == AppLanguage.TR) "Güncelleme indirildi: ${apk.name}" else "Update downloaded: ${apk.name}")
-            } else {
-                update {
-                    copy(
-                        isDownloadingUpdate = false,
-                        updateDownloadProgress = 0f,
-                        isUpdateDownloaded = false,
-                        profileUpdateMessage = if (language == AppLanguage.TR) {
-                            "Güncelleme indirilemedi. İnternet bağlantısını kontrol et."
-                        } else {
-                            "Could not download the update. Check the internet connection."
-                        }
-                    )
-                }
-                log(if (language == AppLanguage.TR) "Güncelleme indirme başarısız" else "Update download failed")
-            }
-        }
+        log(if (language == AppLanguage.TR) "Sistem güncelleme indirmesi başlatıldı: ${download.first}" else "System update download started: ${download.first}")
+        monitorPendingDownload()
     }
 
     fun downloadProfileUpdate() {
@@ -925,27 +906,253 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     /** Re-downloads the update after a failed install. Resets the downloaded state first. */
     fun reDownloadUpdate() {
-        if (_state.value.isDownloadingUpdate) return
-        downloadedApk = null
-        update { copy(isUpdateDownloaded = false) }
+        if (_state.value.updateStage == UpdateStage.DOWNLOADING) return
+        clearPendingUpdate(removeDownload = true)
+        update { copy(isUpdateDownloaded = false, updateStage = UpdateStage.NONE) }
         downloadUpdate()
     }
 
+    fun cancelUpdateDownload() {
+        if (_state.value.updateStage != UpdateStage.DOWNLOADING) return
+        val language = _state.value.language
+        clearPendingUpdate(removeDownload = true)
+        update {
+            copy(
+                isDownloadingUpdate = false,
+                updateDownloadProgress = 0f,
+                isUpdateDownloaded = false,
+                updateStage = UpdateStage.NONE,
+                profileUpdateMessage = updateMessage("download_cancelled", language)
+            )
+        }
+        log(if (language == AppLanguage.TR) "Güncelleme indirmesi iptal edildi" else "Update download cancelled")
+    }
+
     fun installUpdate() {
-        val apk = downloadedApk ?: run {
-            log(if (_state.value.language == AppLanguage.TR) "Kurulacak güncelleme bulunamadı." else "No downloaded update found.")
-            update { copy(isUpdateDownloaded = false) }
+        val language = _state.value.language
+        val apk = pendingApkFile() ?: run {
+            update {
+                copy(
+                    isUpdateDownloaded = false,
+                    updateStage = UpdateStage.FAILED,
+                    profileUpdateMessage = updateMessage("apk_missing", language)
+                )
+            }
+            log(if (language == AppLanguage.TR) "Kurulacak güncelleme dosyası bulunamadı" else "No downloaded update file found")
             return
         }
-        if (!ensureInstallPermission()) return
-        val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", apk)
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val verificationError = verifyDownloadedApk(apk)
+        if (verificationError != null) {
+            update {
+                copy(
+                    isUpdateDownloaded = false,
+                    updateStage = UpdateStage.FAILED,
+                    profileUpdateMessage = updateMessage(verificationError, language)
+                )
+            }
+            log("Update APK verification failed: $verificationError")
+            return
         }
-        app.startActivity(intent)
-        log(if (_state.value.language == AppLanguage.TR) "DronePeak-FCC kurulumu açıldı." else "Opened DronePeak-FCC installer.")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !app.packageManager.canRequestPackageInstalls()) {
+            update {
+                copy(
+                    updateStage = UpdateStage.NEEDS_INSTALL_PERMISSION,
+                    profileUpdateMessage = updateMessage("install_permission", language)
+                )
+            }
+            try {
+                app.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:${app.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+                log(if (language == AppLanguage.TR) "Android kurulum izni ayarları açıldı" else "Opened Android install permission settings")
+            } catch (e: ActivityNotFoundException) {
+                update { copy(updateStage = UpdateStage.FAILED, profileUpdateMessage = updateMessage("installer_unavailable", language)) }
+                log("Install permission settings unavailable: ${e.javaClass.simpleName}")
+            } catch (e: SecurityException) {
+                update { copy(updateStage = UpdateStage.FAILED, profileUpdateMessage = updateMessage("installer_unavailable", language)) }
+                log("Install permission settings blocked: ${e.javaClass.simpleName}")
+            }
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", apk)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, UpdateChecker.APK_MIME_TYPE)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                clipData = android.content.ClipData.newRawUri("DronePeak update", uri)
+            }
+            if (intent.resolveActivity(app.packageManager) == null) {
+                throw ActivityNotFoundException("No package installer activity")
+            }
+            update { copy(updateStage = UpdateStage.INSTALLER_OPEN, profileUpdateMessage = updateMessage("installer_open", language)) }
+            app.startActivity(intent)
+            log(if (language == AppLanguage.TR) "DronePeak-FCC Android kurulum ekranı açıldı" else "Opened DronePeak-FCC Android installer")
+        } catch (e: Exception) {
+            update {
+                copy(
+                    updateStage = UpdateStage.FAILED,
+                    profileUpdateMessage = updateMessage("installer_unavailable", language)
+                )
+            }
+            log("Could not open installer: ${e.javaClass.simpleName}: ${e.message}")
+        }
+    }
+
+    private fun restorePendingUpdate() {
+        val downloadId = prefs.getLong(updateDownloadIdKey, -1L)
+        if (downloadId <= 0L) return
+        runOnIO {
+            applyDownloadSnapshot(downloadId, UpdateChecker.queryApkDownload(app, downloadId, pendingApkFile()))
+        }
+    }
+
+    private fun monitorPendingDownload() {
+        val downloadId = prefs.getLong(updateDownloadIdKey, -1L)
+        if (downloadId <= 0L) return
+        runOnIO {
+            while (prefs.getLong(updateDownloadIdKey, -1L) == downloadId) {
+                val snapshot = UpdateChecker.queryApkDownload(app, downloadId, pendingApkFile())
+                applyDownloadSnapshot(downloadId, snapshot)
+                if (snapshot.state != DownloadState.DOWNLOADING) return@runOnIO
+                delay(750)
+            }
+        }
+    }
+
+    private fun applyDownloadSnapshot(downloadId: Long, snapshot: DownloadSnapshot) {
+        if (prefs.getLong(updateDownloadIdKey, -1L) != downloadId) return
+        val language = _state.value.language
+        when (snapshot.state) {
+            DownloadState.DOWNLOADING -> update {
+                copy(
+                    isDownloadingUpdate = true,
+                    isUpdateDownloaded = false,
+                    updateStage = UpdateStage.DOWNLOADING,
+                    updateDownloadProgress = snapshot.progress,
+                    profileUpdateMessage = if (language == AppLanguage.TR) "Güncelleme indiriliyor..." else "Downloading update..."
+                )
+            }
+            DownloadState.READY -> {
+                val apk = snapshot.file
+                val verificationError = if (apk == null) "apk_missing" else verifyDownloadedApk(apk)
+                if (verificationError == null) {
+                    update {
+                        copy(
+                            isDownloadingUpdate = false,
+                            isUpdateDownloaded = true,
+                            updateStage = UpdateStage.READY,
+                            updateDownloadProgress = 1f,
+                            profileUpdateMessage = updateMessage("ready", language)
+                        )
+                    }
+                    log(if (language == AppLanguage.TR) "Güncelleme indirildi ve doğrulandı: ${apk!!.name}" else "Update downloaded and verified: ${apk!!.name}")
+                } else {
+                    update {
+                        copy(
+                            isDownloadingUpdate = false,
+                            isUpdateDownloaded = false,
+                            updateStage = UpdateStage.FAILED,
+                            updateDownloadProgress = 0f,
+                            profileUpdateMessage = updateMessage(verificationError, language)
+                        )
+                    }
+                    log("Update download verification failed: $verificationError")
+                }
+            }
+            DownloadState.FAILED -> {
+                update {
+                    copy(
+                        isDownloadingUpdate = false,
+                        isUpdateDownloaded = false,
+                        updateStage = UpdateStage.FAILED,
+                        updateDownloadProgress = 0f,
+                        profileUpdateMessage = updateMessage("download_failed", language)
+                    )
+                }
+                log("Update download failed: ${snapshot.message}")
+            }
+            DownloadState.NONE -> Unit
+        }
+    }
+
+    private fun persistPendingUpdate(downloadId: Long, apk: File, info: UpdateInfo) {
+        prefs.edit()
+            .putLong(updateDownloadIdKey, downloadId)
+            .putString(updateApkPathKey, apk.absolutePath)
+            .putString(updateVersionKey, info.version)
+            .putString(updateSha256Key, info.sha256.orEmpty())
+            .apply()
+    }
+
+    private fun clearPendingUpdate(removeDownload: Boolean) {
+        val downloadId = prefs.getLong(updateDownloadIdKey, -1L)
+        if (removeDownload) {
+            UpdateChecker.cancelApkDownload(app, downloadId)
+            pendingApkFile()?.takeIf { isUpdateFile(it) }?.let { file ->
+                runCatching { file.delete() }
+            }
+        }
+        prefs.edit()
+            .remove(updateDownloadIdKey)
+            .remove(updateApkPathKey)
+            .remove(updateVersionKey)
+            .remove(updateSha256Key)
+            .apply()
+    }
+
+    private fun pendingApkFile(): File? {
+        val path = prefs.getString(updateApkPathKey, null) ?: return null
+        return File(path).takeIf { isUpdateFile(it) }
+    }
+
+    private fun isUpdateFile(file: File): Boolean = runCatching {
+        val updatesDir = File(app.getExternalFilesDir(null), "updates").canonicalFile
+        val candidate = file.canonicalFile
+        candidate.parentFile == updatesDir && candidate.extension.equals("apk", ignoreCase = true)
+    }.getOrDefault(false)
+
+    /** Verifies the exact artifact before handing it to Android's package installer. */
+    @Suppress("DEPRECATION")
+    private fun verifyDownloadedApk(apk: File): String? {
+        if (!apk.isFile || apk.length() == 0L) return "apk_missing"
+        val expectedHash = prefs.getString(updateSha256Key, "").orEmpty()
+        if (expectedHash.isNotEmpty() && !UpdateChecker.sha256(apk).equals(expectedHash, ignoreCase = true)) {
+            return "verification_failed"
+        }
+        val archive = app.packageManager.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+            ?: return "verification_failed"
+        if (archive.packageName != app.packageName) return "verification_failed"
+        if (archive.versionName != prefs.getString(updateVersionKey, "")) return "verification_failed"
+        val installed = app.packageManager.getPackageInfo(app.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+        if (archive.longVersionCode <= installed.longVersionCode) return "verification_failed"
+        val archiveSigners = signerDigests(archive)
+        val installedSigners = signerDigests(installed)
+        if (archiveSigners.isEmpty() || installedSigners.isEmpty() || archiveSigners.intersect(installedSigners).isEmpty()) {
+            return "verification_failed"
+        }
+        return null
+    }
+
+    private fun signerDigests(packageInfo: android.content.pm.PackageInfo): Set<String> =
+        packageInfo.signingInfo?.apkContentsSigners?.map { signature ->
+            MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+        }?.toSet().orEmpty()
+
+    private fun updateMessage(key: String, language: AppLanguage): String {
+        val ui = TextCatalog.ui(language)
+        return when (key) {
+            "ready" -> ui.updateReadyToInstall
+            "install_permission" -> ui.installPermissionRequired
+            "installer_open" -> ui.installerOpen
+            "download_cancelled" -> ui.updateCancelled
+            "download_failed" -> ui.updateDownloadFailed
+            "verification_failed", "apk_missing" -> ui.updateVerificationFailed
+            "installer_unavailable" -> ui.installerUnavailable
+            else -> ui.updateDownloadFailed
+        }
     }
 
     // --- Helpers ---

@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Flight
 import androidx.compose.material.icons.filled.History
@@ -121,6 +122,11 @@ class MainActivity : ComponentActivity() {
                 AppRoot(viewModel)
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.onAppResumed()
     }
 }
 
@@ -571,18 +577,49 @@ private fun UpdatePage(state: AppState, viewModel: FccViewModel) {
 
                     if (state.profileUpdateMessage.isNotEmpty()) {
                         Spacer(Modifier.height(10.dp))
-                        BodyText(state.profileUpdateMessage, if (state.isUpdateDownloaded) Success else TextBody)
+                        BodyText(
+                            state.profileUpdateMessage,
+                            when (state.updateStage) {
+                                UpdateStage.READY -> Success
+                                UpdateStage.FAILED -> Danger
+                                UpdateStage.NEEDS_INSTALL_PERMISSION -> Warning
+                                else -> TextBody
+                            }
+                        )
                     }
                     Spacer(Modifier.height(12.dp))
-                    if (state.isDownloadingUpdate) {
-                        ProgressBlock(state.updateDownloadProgress, ui.downloadingDronePeakUpdate)
-                    } else if (state.isUpdateDownloaded) {
-                        CommandButton(ui.installDronePeakUpdate, Icons.Filled.SystemUpdate, Success) {
-                            viewModel.installUpdate()
+                    when (state.updateStage) {
+                        UpdateStage.DOWNLOADING -> {
+                            ProgressBlock(state.updateDownloadProgress, ui.downloadingDronePeakUpdate)
+                            Spacer(Modifier.height(8.dp))
+                            SecondaryButton(ui.cancelDownload, Icons.Filled.Close, Warning) {
+                                viewModel.cancelUpdateDownload()
+                            }
                         }
-                    } else if (state.updateAvailable) {
-                        CommandButton(ui.downloadDronePeakUpdate, Icons.Filled.SystemUpdate, Success) {
-                            viewModel.downloadUpdate()
+                        UpdateStage.READY -> {
+                            CommandButton(ui.installDronePeakUpdate, Icons.Filled.SystemUpdate, Success) {
+                                viewModel.installUpdate()
+                            }
+                        }
+                        UpdateStage.NEEDS_INSTALL_PERMISSION -> {
+                            CommandButton(ui.openInstallSettings, Icons.Filled.Settings, Warning) {
+                                viewModel.installUpdate()
+                            }
+                        }
+                        UpdateStage.INSTALLER_OPEN -> {
+                            CommandButton(ui.retryInstallation, Icons.Filled.SystemUpdate, Success) {
+                                viewModel.installUpdate()
+                            }
+                        }
+                        UpdateStage.FAILED -> {
+                            CommandButton(ui.retry, Icons.Filled.Refresh, Primary) {
+                                viewModel.reDownloadUpdate()
+                            }
+                        }
+                        UpdateStage.NONE -> if (state.updateAvailable) {
+                            CommandButton(ui.downloadDronePeakUpdate, Icons.Filled.SystemUpdate, Success) {
+                                viewModel.downloadUpdate()
+                            }
                         }
                     }
 

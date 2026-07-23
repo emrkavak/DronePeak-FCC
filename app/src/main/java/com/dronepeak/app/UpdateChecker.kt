@@ -1,11 +1,13 @@
 package com.dronepeak.app
 
 import android.content.Context
+import android.app.DownloadManager
+import android.net.Uri
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.io.FileOutputStream
+import java.io.FileInputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
@@ -40,6 +42,20 @@ data class ProfileUpdateResult(
     val version: String,
     val updatedCount: Int,
     val message: String
+)
+
+enum class DownloadState {
+    NONE,
+    DOWNLOADING,
+    READY,
+    FAILED
+}
+
+data class DownloadSnapshot(
+    val state: DownloadState,
+    val progress: Float = 0f,
+    val file: File? = null,
+    val message: String = ""
 )
 
 object UpdateChecker {
@@ -175,57 +191,98 @@ object UpdateChecker {
         }
     }
 
-    fun downloadApk(
+    fun startApkDownload(
         context: Context,
-        info: UpdateInfo,
-        onProgress: (Float) -> Unit
-    ): File? {
+        info: UpdateInfo
+    ): Pair<Long, File>? {
         if (info.downloadUrl.isBlank()) return null
 
-        val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
-        val apkFile = File(updatesDir, "DronePeak-FCC-${info.version}.apk")
-        var conn: HttpURLConnection? = null
-
         return try {
-            conn = (URL(info.downloadUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 10000
-                readTimeout = 30000
-                setRequestProperty("User-Agent", "DronePeak-App")
+            val updatesDir = File(context.getExternalFilesDir(null), "updates").apply { mkdirs() }
+            val apkFile = File(updatesDir, "DronePeak-FCC-${info.version}.apk")
+            // DownloadManager intentionally refuses to overwrite existing files.
+            // This is a versioned app-private artifact, so a stale incomplete copy is safe to remove.
+            if (apkFile.exists() && !apkFile.delete()) {
+                Log.w("DronePeak-Update", "Could not replace stale APK: ${apkFile.name}")
+                return null
             }
-            if (conn.responseCode !in 200..299) return null
 
-            val total = conn.contentLengthLong.takeIf { it > 0 } ?: info.apkSize
-            var downloaded = 0L
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            conn.inputStream.use { input ->
-                FileOutputStream(apkFile).use { output ->
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        downloaded += read
-                        if (total > 0) {
-                            onProgress((downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f))
+            val request = DownloadManager.Request(Uri.parse(info.downloadUrl))
+                .setTitle("DronePeak-FCC")
+                .setDescription("v${info.version} indiriliyor")
+                .setMimeType(APK_MIME_TYPE)
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(false)
+                .setDestinationInExternalFilesDir(context, null, "updates/${apkFile.name}")
+            val manager = context.getSystemService(DownloadManager::class.java)
+            val id = manager.enqueue(request)
+            Log.i("DronePeak-Update", "DownloadManager enqueue id=$id version=${info.version}")
+            id to apkFile
+        } catch (e: Exception) {
+            Log.w("DronePeak-Update", "startApkDownload failed: ${e.javaClass.simpleName}: ${e.message}")
+            null
+        }
+    }
+
+    fun queryApkDownload(context: Context, downloadId: Long, apkFile: File?): DownloadSnapshot {
+        if (downloadId <= 0L) return DownloadSnapshot(DownloadState.NONE)
+        val manager = context.getSystemService(DownloadManager::class.java)
+        return try {
+            manager.query(DownloadManager.Query().setFilterById(downloadId)).use { cursor ->
+                if (!cursor.moveToFirst()) {
+                    return DownloadSnapshot(DownloadState.FAILED, message = "download_not_found")
+                }
+                val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                val soFar = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                when (status) {
+                    DownloadManager.STATUS_SUCCESSFUL -> {
+                        if (apkFile?.isFile == true && apkFile.length() > 0L) {
+                            DownloadSnapshot(DownloadState.READY, 1f, apkFile)
+                        } else {
+                            DownloadSnapshot(DownloadState.FAILED, message = "download_file_missing")
                         }
                     }
+                    DownloadManager.STATUS_FAILED -> DownloadSnapshot(
+                        DownloadState.FAILED,
+                        message = "download_failed_$reason"
+                    )
+                    else -> DownloadSnapshot(
+                        DownloadState.DOWNLOADING,
+                        progress = if (total > 0L) (soFar.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f,
+                        message = "download_status_$status"
+                    )
                 }
             }
-
-            info.sha256?.let { expected ->
-                val actual = sha256(apkFile.readBytes())
-                require(actual.equals(expected, ignoreCase = true)) { "APK SHA-256 mismatch" }
-            }
-
-            onProgress(1f)
-            apkFile
         } catch (e: Exception) {
-            Log.w("DronePeak-Update", "downloadApk failed: ${e.javaClass.simpleName}: ${e.message}")
-            runCatching { apkFile.delete() }
-            null
-        } finally {
-            conn?.disconnect()
+            Log.w("DronePeak-Update", "queryApkDownload failed: ${e.javaClass.simpleName}: ${e.message}")
+            DownloadSnapshot(DownloadState.FAILED, message = "download_query_failed")
         }
+    }
+
+    fun cancelApkDownload(context: Context, downloadId: Long) {
+        if (downloadId <= 0L) return
+        runCatching {
+            context.getSystemService(DownloadManager::class.java).remove(downloadId)
+            Log.i("DronePeak-Update", "DownloadManager removed id=$downloadId")
+        }.onFailure {
+            Log.w("DronePeak-Update", "cancelApkDownload failed: ${it.javaClass.simpleName}: ${it.message}")
+        }
+    }
+
+    fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun fetchProfileFromRefs(refs: List<String>, fileName: String): String? {
@@ -281,4 +338,6 @@ object UpdateChecker {
         val md = MessageDigest.getInstance("SHA-256")
         return md.digest(bytes).joinToString("") { "%02x".format(it) }
     }
+
+    const val APK_MIME_TYPE = "application/vnd.android.package-archive"
 }
