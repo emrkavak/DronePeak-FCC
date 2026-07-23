@@ -88,16 +88,16 @@ Profile JSON files under `app/src/main/assets/profiles/` can usually be merged f
 DronePeak versions track upstream with a DronePeak suffix:
 
 ```text
-1.4.7-dp.1
-1.4.7-dp.2
-1.4.8-dp.1
+1.5.3-dp.1
+1.5.3-dp.2
+1.5.4-dp.1
 ```
 
 Rules:
 
 - Increase `versionCode` for every published APK.
 - Use `versionName = upstreamVersion + "-dp.N"`.
-- Tag releases with a leading `v`, for example `v1.4.7-dp.1`.
+- Tag releases with a leading `v`, for example `v1.5.3-dp.1`.
 
 ## Signing
 
@@ -166,8 +166,8 @@ git push origin main
 4. Create and push a tag:
 
 ```bash
-git tag v1.4.7-dp.1
-git push origin v1.4.7-dp.1
+git tag v1.5.3-dp.1
+git push origin v1.5.3-dp.1
 ```
 
 The `release` workflow builds a signed release APK and uploads it to GitHub Releases. The in-app updater downloads that DronePeak APK asset.

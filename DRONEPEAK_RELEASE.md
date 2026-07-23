@@ -42,9 +42,9 @@ Upstream profile JSON files under `app/src/main/assets/profiles/` can be merged 
 Use the upstream version plus a DronePeak suffix:
 
 ```text
-1.4.7-dp.1
-1.4.7-dp.2
-1.4.8-dp.1
+1.5.3-dp.1
+1.5.3-dp.2
+1.5.4-dp.1
 ```
 
 Always increase `versionCode` for every APK that users may install over an older DronePeak build.
@@ -65,8 +65,8 @@ Required GitHub Actions secrets:
 Create and push a tag:
 
 ```bash
-git tag v1.4.7-dp.1
-git push origin v1.4.7-dp.1
+git tag v1.5.3-dp.1
+git push origin v1.5.3-dp.1
 ```
 
 The `release` workflow builds a signed APK and uploads it as a GitHub Release asset. The in-app updater downloads that DronePeak APK asset.
