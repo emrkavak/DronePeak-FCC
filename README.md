@@ -1,6 +1,6 @@
-# DronePeak FCC
+# DronePeak-FCC
 
-DronePeak FCC is a branded Android control panel for DJI smart controllers with a screen. It is based on the upstream FreeFCC project, keeps the DUML command behavior, and adds a permanent DronePeak application identity, redesigned compact UI, Turkish/English language support, and a dedicated DronePeak update channel.
+DronePeak-FCC is a branded Android control panel for DJI smart controllers with a screen. It is based on the upstream FreeFCC project, keeps the DUML command behavior, and adds a permanent DronePeak-FCC application identity, redesigned compact UI, Turkish/English language support, and a dedicated DronePeak update channel.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Android](https://img.shields.io/badge/Android-SDK%2035-3DDC84.svg)](app/build.gradle.kts)
@@ -14,7 +14,7 @@ DronePeak is not affiliated with, endorsed by, or sponsored by DJI. Use of this 
 
 DronePeak does not include, support, or promote Remote ID disabling.
 
-## What DronePeak Does
+## What DronePeak-FCC Does
 
 - Applies FCC radio profiles through local DUML commands.
 - Restores CE mode with the bundled CE restore profile.
@@ -23,19 +23,19 @@ DronePeak does not include, support, or promote Remote ID disabling.
 - Controls aircraft LEDs where supported.
 - Queries controller/device information.
 - Provides Turkish and English UI with a flag selector on the main panel.
-- Checks this DronePeak repository's GitHub Releases for signed APK updates.
+- Checks this DronePeak-FCC repository's GitHub Releases for signed APK updates.
 - Keeps upstream FreeFCC as a source-level merge remote, not as an in-app APK source.
 
-## DronePeak Update Model
+## DronePeak-FCC Update Model
 
-Users must receive updates from this repository's DronePeak releases, not from the upstream FreeFCC APK.
+Users must receive updates from this repository's DronePeak-FCC releases, not from the upstream FreeFCC APK.
 
 Why:
 
-- Installing an upstream FreeFCC APK would replace the DronePeak app identity and UI.
+- Installing an upstream FreeFCC APK would replace the DronePeak-FCC app identity and UI.
 - DronePeak uses its own package id: `com.dronepeak.app`.
-- DronePeak releases are signed with one persistent release keystore.
-- Upstream code changes are merged into this repository at source level, then published as a new DronePeak APK.
+- DronePeak-FCC releases are signed with one persistent release keystore.
+- Upstream code changes are merged into this repository at source level, then published as a new DronePeak-FCC APK.
 
 The app reads latest release metadata from:
 
@@ -54,7 +54,7 @@ origin   https://github.com/emrkavak/DronePeak-FCC.git
 upstream https://github.com/doesthings/FreeFCC.git
 ```
 
-`origin` is the DronePeak source and release channel. `upstream` is used only to fetch and merge FreeFCC source updates.
+`origin` is the DronePeak-FCC source and release channel. `upstream` is used only to fetch and merge FreeFCC source updates.
 
 ## Upstream Merge Workflow
 
@@ -74,18 +74,18 @@ git merge upstream/main
 When conflicts occur, preserve DronePeak-owned files and settings:
 
 - `app/build.gradle.kts`: keep `applicationId` and `namespace` as `com.dronepeak.app`.
-- `app/src/main/java/com/dronepeak/app/MainActivity.kt`: keep DronePeak UI.
+- `app/src/main/java/com/dronepeak/app/MainActivity.kt`: keep DronePeak-FCC UI.
 - `app/src/main/java/com/dronepeak/app/TextCatalog.kt`: keep Turkish/English language catalog.
-- `app/src/main/java/com/dronepeak/app/UpdateChecker.kt`: keep DronePeak GitHub Releases as the APK update source.
-- `app/src/main/res/drawable/dronepeak_icon.png`: keep DronePeak icon.
-- `app/src/main/AndroidManifest.xml`: keep app label `DronePeak`.
+- `app/src/main/java/com/dronepeak/app/UpdateChecker.kt`: keep DronePeak-FCC GitHub Releases as the APK update source.
+- `app/src/main/res/drawable/dronepeak_icon.png`: keep DronePeak-FCC icon.
+- `app/src/main/AndroidManifest.xml`: keep app label `DronePeak-FCC`.
 - `.github/workflows/release.yml`: keep signed DronePeak release publishing.
 
 Profile JSON files under `app/src/main/assets/profiles/` can usually be merged from upstream unless a conflict needs manual review.
 
 ## Versioning
 
-DronePeak versions track upstream with a DronePeak suffix:
+DronePeak versions track upstream with a DronePeak-FCC suffix:
 
 ```text
 1.5.3-dp.1
@@ -170,16 +170,16 @@ git tag v1.5.3-dp.1
 git push origin v1.5.3-dp.1
 ```
 
-The `release` workflow builds a signed release APK and uploads it to GitHub Releases. The in-app updater downloads that DronePeak APK asset.
+The `release` workflow builds a signed release APK and uploads it to GitHub Releases. The in-app updater downloads that DronePeak-FCC APK asset.
 
 ## Installation On DJI RC Controllers
 
 General flow:
 
-1. Build or download the latest DronePeak APK from this repository's Releases page.
+1. Build or download the latest DronePeak-FCC APK from this repository's Releases page.
 2. Copy the APK to a microSD card or another controller-accessible location.
 3. Install it using the controller's package installer or file manager workflow.
-4. Open DronePeak.
+4. Open DronePeak-FCC.
 5. Select language from the main screen if needed.
 6. Power on and link the aircraft.
 7. Tap `Connect`.
@@ -213,10 +213,10 @@ app/src/main/java/com/dronepeak/app/
 
 ## License And Attribution
 
-DronePeak FCC is distributed under the AGPL-3.0 license inherited from the upstream FreeFCC project. The upstream source is maintained at:
+DronePeak-FCC is distributed under the AGPL-3.0 license inherited from the upstream FreeFCC project. The upstream source is maintained at:
 
 ```text
 https://github.com/doesthings/FreeFCC
 ```
 
-DronePeak-specific branding, UI, package identity, release workflow, and language layer are maintained in this repository.
+DronePeak-FCC-specific branding, UI, package identity, release workflow, and language layer are maintained in this repository.

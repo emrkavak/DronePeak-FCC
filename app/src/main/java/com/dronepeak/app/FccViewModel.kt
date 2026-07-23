@@ -752,7 +752,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         }
         update { copy(isCheckingUpdate = true, profileUpdateMessage = "") }
         val language = _state.value.language
-        log(if (language == AppLanguage.TR) "DronePeak release güncellemesi kontrol ediliyor..." else "Checking DronePeak release updates...")
+        log(if (language == AppLanguage.TR) "DronePeak-FCC güncellemesi kontrol ediliyor..." else "Checking DronePeak-FCC updates...")
 
         runOnIO {
             val info = UpdateChecker.fetchLatest()
@@ -776,9 +776,9 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 )
             }
             if (isNewer) {
-                log(if (language == AppLanguage.TR) "DronePeak güncellemesi var: v${info.version}" else "DronePeak update available: v${info.version}")
+                log(if (language == AppLanguage.TR) "DronePeak-FCC güncellemesi var: v${info.version}" else "DronePeak-FCC update available: v${info.version}")
             } else {
-                log(if (language == AppLanguage.TR) "DronePeak güncel (v$APP_VERSION)" else "DronePeak is up to date (v$APP_VERSION)")
+                log(if (language == AppLanguage.TR) "DronePeak-FCC güncel (v$APP_VERSION)" else "DronePeak-FCC is up to date (v$APP_VERSION)")
             }
         }
     }
@@ -800,7 +800,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             app.startActivity(intent)
-            log(if (_state.value.language == AppLanguage.TR) "APK kurulumu için DronePeak'e izin ver, sonra indirmeyi tekrar başlat." else "Allow DronePeak to install APKs, then start the download again.")
+            log(if (_state.value.language == AppLanguage.TR) "APK kurulumu için DronePeak-FCC'ye izin ver, sonra indirmeyi tekrar başlat." else "Allow DronePeak-FCC to install APKs, then start the download again.")
             false
         }
     }
@@ -808,7 +808,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
     fun downloadUpdate() {
         downloadedApk = null
         val info = _state.value.updateInfo ?: run {
-            log(if (_state.value.language == AppLanguage.TR) "Önce DronePeak güncelleme kontrolü yap." else "Check DronePeak updates first.")
+            log(if (_state.value.language == AppLanguage.TR) "Önce DronePeak-FCC güncelleme kontrolü yap." else "Check DronePeak-FCC updates first.")
             return
         }
         if (_state.value.isDownloadingUpdate) return
@@ -816,13 +816,13 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             update {
                 copy(
                     profileUpdateMessage = if (_state.value.language == AppLanguage.TR) {
-                        "Bu DronePeak release içinde APK asset'i bulunamadı."
+                        "Bu sürüm için indirilebilir APK bulunamadı."
                     } else {
-                        "This DronePeak release has no APK asset."
+                        "No downloadable APK was found for this version."
                     }
                 )
             }
-            log(if (_state.value.language == AppLanguage.TR) "DronePeak release APK asset'i bulunamadı." else "DronePeak release APK asset missing.")
+            log(if (_state.value.language == AppLanguage.TR) "Güncelleme APK'sı bulunamadı." else "Update APK missing.")
             return
         }
         if (!ensureInstallPermission()) return
@@ -832,10 +832,10 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 isDownloadingUpdate = true,
                 updateDownloadProgress = 0f,
                 isUpdateDownloaded = false,
-                profileUpdateMessage = if (language == AppLanguage.TR) "DronePeak APK indiriliyor..." else "Downloading DronePeak APK..."
+                profileUpdateMessage = if (language == AppLanguage.TR) "Güncelleme indiriliyor..." else "Downloading update..."
             )
         }
-        log(if (language == AppLanguage.TR) "DronePeak APK indiriliyor..." else "Downloading DronePeak APK...")
+        log(if (language == AppLanguage.TR) "DronePeak-FCC güncellemesi indiriliyor..." else "Downloading DronePeak-FCC update...")
 
         runOnIO {
             val apk = UpdateChecker.downloadApk(app, info) { progress ->
@@ -849,13 +849,13 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                         updateDownloadProgress = 1f,
                         isUpdateDownloaded = true,
                         profileUpdateMessage = if (language == AppLanguage.TR) {
-                            "DronePeak APK indirildi. Kurulumla tasarım ve marka korunur."
+                            "Güncelleme indirildi. Kurulumu başlatabilirsin."
                         } else {
-                            "DronePeak APK downloaded. Installing it preserves the design and branding."
+                            "Update downloaded. You can start installation."
                         }
                     )
                 }
-                log(if (language == AppLanguage.TR) "DronePeak APK indirildi: ${apk.name}" else "DronePeak APK downloaded: ${apk.name}")
+                log(if (language == AppLanguage.TR) "Güncelleme indirildi: ${apk.name}" else "Update downloaded: ${apk.name}")
             } else {
                 update {
                     copy(
@@ -863,13 +863,13 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                         updateDownloadProgress = 0f,
                         isUpdateDownloaded = false,
                         profileUpdateMessage = if (language == AppLanguage.TR) {
-                            "DronePeak APK indirilemedi. İnternet/release asset bilgisini kontrol et."
+                            "Güncelleme indirilemedi. İnternet bağlantısını kontrol et."
                         } else {
-                            "Could not download DronePeak APK. Check internet/release asset setup."
+                            "Could not download the update. Check the internet connection."
                         }
                     )
                 }
-                log(if (language == AppLanguage.TR) "DronePeak APK indirme başarısız" else "DronePeak APK download failed")
+                log(if (language == AppLanguage.TR) "Güncelleme indirme başarısız" else "Update download failed")
             }
         }
     }
@@ -885,10 +885,10 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             copy(
                 isDownloadingUpdate = true,
                 updateDownloadProgress = 0f,
-                profileUpdateMessage = if (language == AppLanguage.TR) "Upstream profiller indiriliyor..." else "Downloading upstream profiles..."
+                profileUpdateMessage = if (language == AppLanguage.TR) "Profil dosyaları indiriliyor..." else "Downloading profile files..."
             )
         }
-        log(if (language == AppLanguage.TR) "Upstream profiller indiriliyor..." else "Downloading upstream profiles...")
+        log(if (language == AppLanguage.TR) "Profil dosyaları indiriliyor..." else "Downloading profile files...")
 
         runOnIO {
             val result = UpdateChecker.downloadProfiles(app, info) { progress ->
@@ -900,9 +900,9 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                     updateDownloadProgress = if (result.success) 1f else 0f,
                     profileUpdateMessage = if (result.success) {
                         if (language == AppLanguage.TR) {
-                            "Upstream profiller güncellendi (${result.updatedCount} dosya). DronePeak tasarımı korundu."
+                            "Profil dosyaları güncellendi (${result.updatedCount} dosya)."
                         } else {
-                            "Upstream profiles updated (${result.updatedCount} files). DronePeak design preserved."
+                            "Profile files updated (${result.updatedCount} files)."
                         }
                     } else {
                         if (language == AppLanguage.TR) {
@@ -915,7 +915,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             }
             log(
                 if (result.success) {
-                    if (language == AppLanguage.TR) "Upstream profiller güncellendi: ${result.updatedCount} dosya" else "Upstream profiles updated: ${result.updatedCount} files"
+                    if (language == AppLanguage.TR) "Profil dosyaları güncellendi: ${result.updatedCount} dosya" else "Profile files updated: ${result.updatedCount} files"
                 } else {
                     if (language == AppLanguage.TR) "Profil güncellemesi başarısız: ${result.message}" else "Profile update failed: ${result.message}"
                 }
@@ -933,7 +933,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun installUpdate() {
         val apk = downloadedApk ?: run {
-            log(if (_state.value.language == AppLanguage.TR) "Kurulacak DronePeak APK bulunamadı." else "No downloaded DronePeak APK found.")
+            log(if (_state.value.language == AppLanguage.TR) "Kurulacak güncelleme bulunamadı." else "No downloaded update found.")
             update { copy(isUpdateDownloaded = false) }
             return
         }
@@ -945,7 +945,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         app.startActivity(intent)
-        log(if (_state.value.language == AppLanguage.TR) "DronePeak APK kurulumu açıldı." else "Opened DronePeak APK installer.")
+        log(if (_state.value.language == AppLanguage.TR) "DronePeak-FCC kurulumu açıldı." else "Opened DronePeak-FCC installer.")
     }
 
     // --- Helpers ---

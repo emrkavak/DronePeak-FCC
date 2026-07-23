@@ -199,7 +199,7 @@ class FccKeepaliveService : Service() {
             android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
         )
         return builder
-            .setContentTitle("DronePeak")
+            .setContentTitle("DronePeak-FCC")
             .setContentText(if (language == AppLanguage.TR) "FCC modu korunuyor..." else "Maintaining FCC mode...")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)

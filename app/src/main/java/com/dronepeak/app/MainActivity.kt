@@ -94,7 +94,7 @@ private val TextBody = Color(0xFFA8B3C2)
 private val TextMuted = Color(0xFF6E7A89)
 
 private val BottomNavHeight = 60.dp
-private val PageHorizontalPadding = 16.dp
+private val PageHorizontalPadding = 12.dp
 
 class MainActivity : ComponentActivity() {
 
@@ -173,16 +173,16 @@ private fun FccPage(state: AppState, viewModel: FccViewModel) {
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         FlightStatusPanel(state, viewModel)
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         PrimaryActionPanel(state, viewModel)
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         UtilitiesPanel(state, viewModel)
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         AutoFccPanel(state, viewModel)
     }
 }
@@ -191,16 +191,23 @@ private fun FccPage(state: AppState, viewModel: FccViewModel) {
 private fun FlightStatusPanel(state: AppState, viewModel: FccViewModel) {
     val ui = TextCatalog.ui(state.language)
     PanelCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusMetric(
                 label = ui.link,
                 value = connectionLabel(state, ui),
                 color = connectionColor(state),
                 modifier = Modifier.weight(1f)
             )
+            StatusMetric(
+                label = ui.operation,
+                value = operationLabel(state, ui),
+                color = operationColor(state),
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatusMetric(
                 label = ui.region,
                 value = if (state.isFccEnabled) "FCC" else "CE",
@@ -215,18 +222,16 @@ private fun FlightStatusPanel(state: AppState, viewModel: FccViewModel) {
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
         DividerLine()
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
 
         InfoRowCompact(ui.controller, state.controllerModel.ifEmpty { ui.unknown })
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         InfoRowCompact(ui.aircraftSerial, state.aircraftSerial.ifEmpty { ui.notDetected })
-        Spacer(Modifier.height(8.dp))
-        InfoRowCompact(ui.operation, operationLabel(state, ui), operationColor(state))
 
         if (state.aircraftSerial.isNotEmpty()) {
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             CompactTextButton(
                 text = ui.refreshSerial,
                 icon = Icons.Filled.Refresh,
@@ -249,11 +254,11 @@ private fun PrimaryActionPanel(state: AppState, viewModel: FccViewModel) {
             return@PanelCard
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
         when {
             !state.isConnected -> {
                 BodyText(ui.connectHint)
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
                 CommandButton(
                     text = ui.connect,
                     icon = Icons.Filled.Wifi,
@@ -264,7 +269,7 @@ private fun PrimaryActionPanel(state: AppState, viewModel: FccViewModel) {
             }
             state.isFccEnabled -> {
                 BodyText(ui.fccActiveHint, Success)
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
                 CommandButton(
                     text = ui.stopFcc,
                     icon = Icons.Filled.PowerSettingsNew,
@@ -294,7 +299,7 @@ private fun PrimaryActionPanel(state: AppState, viewModel: FccViewModel) {
             }
             else -> {
                 BodyText(state.message.ifEmpty { ui.readyApplyFcc })
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
                 CommandButton(
                     text = ui.enableFcc,
                     icon = Icons.Filled.Radio,
@@ -311,9 +316,9 @@ private fun PrimaryActionPanel(state: AppState, viewModel: FccViewModel) {
             exit = fadeOut(tween(120)) + shrinkVertically(tween(120))
         ) {
             Column {
-                Spacer(Modifier.height(12.dp))
-                DividerLine()
                 Spacer(Modifier.height(10.dp))
+                DividerLine()
+                Spacer(Modifier.height(8.dp))
                 ToggleRow(
                     title = "Keepalive",
                     detail = if (state.isKeepaliveRunning) ui.keepaliveActive else ui.keepaliveInactive,
@@ -333,7 +338,7 @@ private fun UtilitiesPanel(state: AppState, viewModel: FccViewModel) {
     val ui = TextCatalog.ui(state.language)
     PanelCard {
         SectionHeader(ui.aircraftUtilities, Icons.Filled.Settings)
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
 
         BodyText(
             if (state.fourGMessage.isNotEmpty()) state.fourGMessage
@@ -347,7 +352,7 @@ private fun UtilitiesPanel(state: AppState, viewModel: FccViewModel) {
                 state.fourGMessage.contains("yok", true)
             ) Warning else TextBody
         )
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
         if (state.is4gBusy) {
             ProgressBlock(state.busyProgress, ui.sending4g)
@@ -361,9 +366,9 @@ private fun UtilitiesPanel(state: AppState, viewModel: FccViewModel) {
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
         DividerLine()
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
@@ -504,7 +509,7 @@ private fun UpdatePage(state: AppState, viewModel: FccViewModel) {
     val ui = TextCatalog.ui(state.language)
     PageScaffold {
         PageTitle(ui.updates, Icons.Outlined.SystemUpdate)
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
 
         when {
             state.isCheckingUpdate -> {
@@ -544,57 +549,44 @@ private fun UpdatePage(state: AppState, viewModel: FccViewModel) {
                         )
                     }
 
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
                     DividerLine()
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
 
                     InfoRowCompact(ui.latest, "v${info.version}", if (state.updateAvailable) Success else TextStrong)
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                     InfoRowCompact(ui.released, info.publishedAt.split("T").firstOrNull().orEmpty())
                     if (info.apkSize > 0) {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(6.dp))
                         InfoRowCompact(ui.size, "%.1f MB".format(info.apkSize / 1048576.0))
                     }
 
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
                     DividerLine()
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
 
                     Text(ui.changelog, color = TextStrong, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
                     BodyText(info.changelog.ifEmpty { ui.noChangelog })
 
-                    Spacer(Modifier.height(14.dp))
-                    NoticeRow(ui.dronePeakBuildRequired, ui.upstreamApkBlocked, Success, Icons.Filled.CheckCircle)
                     if (state.profileUpdateMessage.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(10.dp))
                         BodyText(state.profileUpdateMessage, if (state.isUpdateDownloaded) Success else TextBody)
                     }
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(12.dp))
                     if (state.isDownloadingUpdate) {
                         ProgressBlock(state.updateDownloadProgress, ui.downloadingDronePeakUpdate)
-                    } else {
-                        if (state.isUpdateDownloaded) {
-                            CommandButton(ui.installDronePeakUpdate, Icons.Filled.SystemUpdate, Success) {
-                                viewModel.installUpdate()
-                            }
-                        } else {
-                            CommandButton(ui.downloadDronePeakUpdate, Icons.Filled.SystemUpdate, Success) {
-                                viewModel.downloadUpdate()
-                            }
+                    } else if (state.isUpdateDownloaded) {
+                        CommandButton(ui.installDronePeakUpdate, Icons.Filled.SystemUpdate, Success) {
+                            viewModel.installUpdate()
+                        }
+                    } else if (state.updateAvailable) {
+                        CommandButton(ui.downloadDronePeakUpdate, Icons.Filled.SystemUpdate, Success) {
+                            viewModel.downloadUpdate()
                         }
                     }
 
-                    Spacer(Modifier.height(14.dp))
-                    DividerLine()
                     Spacer(Modifier.height(12.dp))
-                    NoticeRow(ui.profileUpdateAvailable, ui.applyProfileUpdate, Warning, Icons.Filled.Info)
-                    Spacer(Modifier.height(10.dp))
-                    SecondaryButton(ui.applyProfileUpdate, Icons.Filled.Refresh, Warning) {
-                        viewModel.downloadProfileUpdate()
-                    }
-
-                    Spacer(Modifier.height(14.dp))
                     SecondaryButton(ui.checkAgain, Icons.Filled.Refresh, Primary) {
                         viewModel.checkForUpdates(force = true)
                     }
@@ -619,10 +611,17 @@ private fun PageScaffold(content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 private fun AppHeader(state: AppState, viewModel: FccViewModel, ui: UiText) {
-    PanelCard(padding = 14.dp) {
+    PanelCard(padding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("DronePeak", color = TextStrong, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                Text(
+                    "DronePeak-FCC",
+                    color = TextStrong,
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(
                     if (state.controllerModel.isNotEmpty()) "v${FccViewModel.APP_VERSION} / ${state.controllerModel}" else "v${FccViewModel.APP_VERSION}",
                     color = TextMuted,
@@ -632,12 +631,12 @@ private fun AppHeader(state: AppState, viewModel: FccViewModel, ui: UiText) {
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                StatusChip(ui.rcPanel, Primary)
-                Spacer(Modifier.height(8.dp))
                 LanguageSelector(
                     selected = state.language,
                     onSelected = { viewModel.setLanguage(it) }
                 )
+                Spacer(Modifier.height(6.dp))
+                StatusChip(ui.rcPanel, Primary)
             }
         }
     }
@@ -659,7 +658,7 @@ private fun LanguageSelector(selected: AppLanguage, onSelected: (AppLanguage) ->
                     color = if (isSelected) TextStrong else TextBody,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
                 )
             }
         }
@@ -717,7 +716,7 @@ private fun StatusMetric(label: String, value: String, color: Color, modifier: M
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(horizontal = 10.dp)
         ) {
-            Text(label, color = TextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(label, color = TextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StatusDot(color)
@@ -878,7 +877,7 @@ private fun NoticeRow(title: String, detail: String, color: Color, icon: ImageVe
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(title, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                Text(detail, color = TextBody, fontSize = 11.sp, maxLines = 1)
+                Text(detail, color = TextBody, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }

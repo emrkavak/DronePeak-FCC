@@ -1,6 +1,6 @@
 # Remote ID Policy
 
-DronePeak FCC does not include Remote ID disabling and will not add it.
+DronePeak-FCC does not include Remote ID disabling and will not add it.
 
 ## Short Version
 
@@ -12,11 +12,11 @@ Remote ID disabling is different. In many regulated airspaces, Remote ID is a le
 
 Remote ID helps authorities and nearby airspace participants identify drone activity. Removing or disabling that signal can make a drone harder to detect in situations where visibility matters for public safety.
 
-DronePeak FCC is not designed to hide aircraft identity, bypass Remote ID law, or interfere with aviation safety systems.
+DronePeak-FCC is not designed to hide aircraft identity, bypass Remote ID law, or interfere with aviation safety systems.
 
 ## Scope
 
-DronePeak FCC will focus on:
+DronePeak-FCC will focus on:
 
 - FCC profile application where authorized.
 - CE restore.

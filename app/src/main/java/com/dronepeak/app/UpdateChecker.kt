@@ -183,7 +183,7 @@ object UpdateChecker {
         if (info.downloadUrl.isBlank()) return null
 
         val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
-        val apkFile = File(updatesDir, "DronePeak-${info.version}.apk")
+        val apkFile = File(updatesDir, "DronePeak-FCC-${info.version}.apk")
         var conn: HttpURLConnection? = null
 
         return try {

@@ -17,7 +17,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="DronePeak"
+        android:label="DronePeak-FCC"
         android:icon="@drawable/dronepeak_icon"
         android:roundIcon="@drawable/dronepeak_icon"
         android:theme="@style/Theme.FreeFCC"
