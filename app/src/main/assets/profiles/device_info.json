@@ -1,0 +1,16 @@
+{
+  "name": "Device Info",
+  "description": "Queries the controller for hardware version, bootloader version, and app version. Uses a request/response exchange instead of fire-and-forget.",
+  "sender": 130,
+  "sender_desc": "MOBILE_APP, index 4",
+  "cmd_type": 32,
+  "cmd_type_desc": "Request, ACK_BEFORE_EXEC, no encryption",
+  "rounds": 1,
+  "inter_frame_delay_ms": 0,
+  "inter_round_delay_ms": 0,
+  "read_window_ms": 500,
+  "needs_response": true,
+  "frames": [
+    { "s": 0, "i": 1, "d": 0, "p": "", "note": "GENERAL VersionInquiry to ANY — returns HW version, LDR version, app version" }
+  ]
+}

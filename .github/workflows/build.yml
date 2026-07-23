@@ -1,0 +1,95 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DRONEPEAK_REPO: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble release
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Upload unsigned APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dronepeak-release-unsigned-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+  signed-release:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    env:
+      SIGNING_STORE_FILE: ${{ runner.temp }}/release.jks
+      SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+      SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+      SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+      SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Check signing secrets are present
+        id: secrets
+        run: |
+          if [ -z "$SIGNING_KEYSTORE_B64" ] || [ -z "$SIGNING_STORE_PASSWORD" ] || [ -z "$SIGNING_KEY_ALIAS" ] || [ -z "$SIGNING_KEY_PASSWORD" ]; then
+            echo "have_secrets=false" >> "$GITHUB_OUTPUT"
+            echo "Warning: signing secrets not configured — skipping signed build." >&2
+          else
+            echo "have_secrets=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decode keystore
+        if: steps.secrets.outputs.have_secrets == 'true'
+        run: echo "$SIGNING_KEYSTORE_B64" | base64 --decode > "$SIGNING_STORE_FILE"
+
+      - name: Assemble signed release
+        if: steps.secrets.outputs.have_secrets == 'true'
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Upload signed APK
+        if: steps.secrets.outputs.have_secrets == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dronepeak-release-signed-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
