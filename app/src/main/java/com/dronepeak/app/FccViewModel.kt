@@ -87,7 +87,7 @@ data class AppState(
 class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     companion object {
-        const val APP_VERSION = "1.5.3-dp.5"
+        const val APP_VERSION = "1.5.3-dp.6"
 
         /**
          * Aircraft model codes known to support DJI Cellular Dongle 2 / 4G.
