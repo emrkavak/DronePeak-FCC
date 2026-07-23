@@ -25,7 +25,7 @@ jobs:
   signed-apk-release:
     runs-on: ubuntu-latest
     env:
-      SIGNING_STORE_FILE: ${{ runner.temp }}/release.jks
+      SIGNING_STORE_FILE: /tmp/release.jks
 
     steps:
       - uses: actions/checkout@v4
