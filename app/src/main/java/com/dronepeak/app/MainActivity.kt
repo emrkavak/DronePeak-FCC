@@ -581,11 +581,37 @@ private fun UpdatePage(state: AppState, viewModel: FccViewModel) {
                             state.profileUpdateMessage,
                             when (state.updateStage) {
                                 UpdateStage.READY -> Success
+                                UpdateStage.COMPLETED -> Success
                                 UpdateStage.FAILED -> Danger
-                                UpdateStage.NEEDS_INSTALL_PERMISSION -> Warning
+                                UpdateStage.NEEDS_INSTALL_PERMISSION,
+                                UpdateStage.VERIFYING,
+                                UpdateStage.PREPARING_INSTALL,
+                                UpdateStage.WAITING_FOR_ANDROID -> Warning
                                 else -> TextBody
                             }
                         )
+                    }
+                    if (state.updateDiagnosticSummary.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        DividerLine()
+                        Spacer(Modifier.height(10.dp))
+                        Text(ui.updateDiagnostics, color = TextStrong, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(4.dp))
+                        BodyText(
+                            state.updateDiagnosticSummary,
+                            if (state.updateDiagnosticFailure) Danger else TextBody
+                        )
+                        if (state.updateDiagnosticDetails.isNotEmpty()) {
+                            Spacer(Modifier.height(5.dp))
+                            Text(
+                                state.updateDiagnosticDetails,
+                                color = TextMuted,
+                                fontSize = 10.sp,
+                                lineHeight = 14.sp,
+                                maxLines = 8,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                     Spacer(Modifier.height(12.dp))
                     when (state.updateStage) {
@@ -606,10 +632,15 @@ private fun UpdatePage(state: AppState, viewModel: FccViewModel) {
                                 viewModel.installUpdate()
                             }
                         }
-                        UpdateStage.INSTALLER_OPEN -> {
-                            CommandButton(ui.retryInstallation, Icons.Filled.SystemUpdate, Success) {
-                                viewModel.installUpdate()
-                            }
+                        UpdateStage.VERIFYING,
+                        UpdateStage.PREPARING_INSTALL -> {
+                            ProgressBlock(0f, state.profileUpdateMessage.ifEmpty { ui.preparingInstallation })
+                        }
+                        UpdateStage.WAITING_FOR_ANDROID -> {
+                            ProgressBlock(1f, state.profileUpdateMessage.ifEmpty { ui.waitingForAndroidApproval })
+                        }
+                        UpdateStage.COMPLETED -> {
+                            NoticeRow(ui.installationCompleted, state.profileUpdateMessage, Success, Icons.Filled.CheckCircle)
                         }
                         UpdateStage.FAILED -> {
                             CommandButton(ui.retry, Icons.Filled.Refresh, Primary) {

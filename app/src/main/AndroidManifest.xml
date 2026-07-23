@@ -16,6 +16,7 @@
     </queries>
 
     <application
+        android:name=".DronePeakApp"
         android:allowBackup="false"
         android:label="DronePeak-FCC"
         android:icon="@drawable/dronepeak_icon"
@@ -46,6 +47,10 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".UpdateInstallReceiver"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

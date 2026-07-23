@@ -1,14 +1,10 @@
 package com.dronepeak.app
 
 import android.app.Application
-import android.content.ActivityNotFoundException
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -33,9 +29,12 @@ import java.util.Locale
 enum class UpdateStage {
     NONE,
     DOWNLOADING,
+    VERIFYING,
+    PREPARING_INSTALL,
     READY,
     NEEDS_INSTALL_PERMISSION,
-    INSTALLER_OPEN,
+    WAITING_FOR_ANDROID,
+    COMPLETED,
     FAILED
 }
 
@@ -66,6 +65,9 @@ data class AppState(
     val isUpdateDownloaded: Boolean = false,
     val profileUpdateMessage: String = "",
     val updateStage: UpdateStage = UpdateStage.NONE,
+    val updateDiagnosticSummary: String = "",
+    val updateDiagnosticDetails: String = "",
+    val updateDiagnosticFailure: Boolean = false,
     val updateAvailable: Boolean = false,
     val updateChecked: Boolean = false,
     // Keepalive state
@@ -85,7 +87,7 @@ data class AppState(
 class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     companion object {
-        const val APP_VERSION = "1.5.3-dp.4"
+        const val APP_VERSION = "1.5.3-dp.5"
 
         /**
          * Aircraft model codes known to support DJI Cellular Dongle 2 / 4G.
@@ -129,6 +131,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         if (cachedSerial.isNotEmpty()) {
             update { copy(aircraftSerial = cachedSerial) }
         }
+        restoreUpdateDiagnostics()
         restorePendingUpdate()
     }
 
@@ -162,6 +165,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     /** Refreshes persistent DownloadManager state when returning from Android Settings or installer. */
     fun onAppResumed() {
+        restoreUpdateDiagnostics()
         restorePendingUpdate()
     }
 
@@ -828,8 +832,11 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         }
         val language = _state.value.language
         clearPendingUpdate(removeDownload = true)
+        UpdateDiagnostics.clearResult(app)
         val download = UpdateChecker.startApkDownload(app, info)
         if (download == null) {
+            UpdateDiagnostics.setResult(app, updateMessage("download_failed", language), true)
+            UpdateDiagnostics.record(app, "DOWNLOAD_START_FAILED version=${info.version}")
             update {
                 copy(
                     isDownloadingUpdate = false,
@@ -842,12 +849,16 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             return
         }
         persistPendingUpdate(download.first, download.second, info)
+        UpdateDiagnostics.record(app, "DOWNLOAD_STARTED id=${download.first} version=${info.version} file=${download.second.name}")
         update {
             copy(
                 isDownloadingUpdate = true,
                 updateDownloadProgress = 0f,
                 isUpdateDownloaded = false,
                 updateStage = UpdateStage.DOWNLOADING,
+                updateDiagnosticSummary = "",
+                updateDiagnosticDetails = "",
+                updateDiagnosticFailure = false,
                 profileUpdateMessage = if (language == AppLanguage.TR) "Güncelleme indiriliyor..." else "Downloading update..."
             )
         }
@@ -916,6 +927,8 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         if (_state.value.updateStage != UpdateStage.DOWNLOADING) return
         val language = _state.value.language
         clearPendingUpdate(removeDownload = true)
+        UpdateDiagnostics.setResult(app, updateMessage("download_cancelled", language), false)
+        UpdateDiagnostics.record(app, "DOWNLOAD_CANCELLED")
         update {
             copy(
                 isDownloadingUpdate = false,
@@ -930,6 +943,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun installUpdate() {
         val language = _state.value.language
+        if (_state.value.updateStage == UpdateStage.VERIFYING || _state.value.updateStage == UpdateStage.PREPARING_INSTALL) return
         val apk = pendingApkFile() ?: run {
             update {
                 copy(
@@ -941,54 +955,73 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             log(if (language == AppLanguage.TR) "Kurulacak güncelleme dosyası bulunamadı" else "No downloaded update file found")
             return
         }
-        val verificationError = verifyDownloadedApk(apk)
-        if (verificationError != null) {
+        update {
+            copy(
+                updateStage = UpdateStage.VERIFYING,
+                profileUpdateMessage = TextCatalog.ui(language).preparingInstallation
+            )
+        }
+        UpdateDiagnostics.record(app, "INSTALL_REQUESTED version=${prefs.getString(updateVersionKey, "")}")
+        runOnIO {
+            val verificationError = runCatching { verifyDownloadedApk(apk) }.getOrElse {
+                UpdateDiagnostics.record(app, "VERIFY_EXCEPTION ${it.javaClass.simpleName}: ${it.message}")
+                "verification_failed"
+            }
+            if (verificationError != null) {
+                UpdateDiagnostics.setResult(app, updateMessage(verificationError, language), true)
+                update {
+                    copy(
+                        isUpdateDownloaded = false,
+                        updateStage = UpdateStage.FAILED,
+                        profileUpdateMessage = updateMessage(verificationError, language)
+                    )
+                }
+                log("Update APK verification failed: $verificationError")
+                return@runOnIO
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !app.packageManager.canRequestPackageInstalls()) {
+                update {
+                    copy(
+                        updateStage = UpdateStage.NEEDS_INSTALL_PERMISSION,
+                        profileUpdateMessage = updateMessage("install_permission", language)
+                    )
+                }
+                UpdateDiagnostics.setResult(app, updateMessage("install_permission", language), false)
+                openInstallPermissionSettings(language)
+                return@runOnIO
+            }
             update {
                 copy(
-                    isUpdateDownloaded = false,
-                    updateStage = UpdateStage.FAILED,
-                    profileUpdateMessage = updateMessage(verificationError, language)
+                    updateStage = UpdateStage.PREPARING_INSTALL,
+                    profileUpdateMessage = TextCatalog.ui(language).preparingInstallation
                 )
             }
-            log("Update APK verification failed: $verificationError")
-            return
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !app.packageManager.canRequestPackageInstalls()) {
-            update {
-                copy(
-                    updateStage = UpdateStage.NEEDS_INSTALL_PERMISSION,
-                    profileUpdateMessage = updateMessage("install_permission", language)
-                )
+            val version = prefs.getString(updateVersionKey, "").orEmpty()
+            when (UpdateInstallCoordinator(app).start(apk, version)) {
+                InstallStartResult.STARTED -> update {
+                    copy(
+                        updateStage = UpdateStage.WAITING_FOR_ANDROID,
+                        profileUpdateMessage = TextCatalog.ui(language).waitingForAndroidApproval
+                    )
+                }
+                InstallStartResult.FAILED -> update {
+                    copy(
+                        updateStage = UpdateStage.FAILED,
+                        profileUpdateMessage = updateMessage("installer_unavailable", language)
+                    )
+                }
             }
-            try {
-                app.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                    data = Uri.parse("package:${app.packageName}")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                })
-                log(if (language == AppLanguage.TR) "Android kurulum izni ayarları açıldı" else "Opened Android install permission settings")
-            } catch (e: ActivityNotFoundException) {
-                update { copy(updateStage = UpdateStage.FAILED, profileUpdateMessage = updateMessage("installer_unavailable", language)) }
-                log("Install permission settings unavailable: ${e.javaClass.simpleName}")
-            } catch (e: SecurityException) {
-                update { copy(updateStage = UpdateStage.FAILED, profileUpdateMessage = updateMessage("installer_unavailable", language)) }
-                log("Install permission settings blocked: ${e.javaClass.simpleName}")
-            }
-            return
         }
+    }
+
+    private fun openInstallPermissionSettings(language: AppLanguage) {
         try {
-            val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", apk)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, UpdateChecker.APK_MIME_TYPE)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                clipData = android.content.ClipData.newRawUri("DronePeak update", uri)
-            }
-            if (intent.resolveActivity(app.packageManager) == null) {
-                throw ActivityNotFoundException("No package installer activity")
-            }
-            update { copy(updateStage = UpdateStage.INSTALLER_OPEN, profileUpdateMessage = updateMessage("installer_open", language)) }
-            app.startActivity(intent)
-            log(if (language == AppLanguage.TR) "DronePeak-FCC Android kurulum ekranı açıldı" else "Opened DronePeak-FCC Android installer")
+            app.startActivity(android.content.Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                data = android.net.Uri.parse("package:${app.packageName}")
+                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+            UpdateDiagnostics.record(app, "INSTALL_PERMISSION_SETTINGS_OPENED")
+            log(if (language == AppLanguage.TR) "Android kurulum izni ayarları açıldı" else "Opened Android install permission settings")
         } catch (e: Exception) {
             update {
                 copy(
@@ -996,7 +1029,9 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                     profileUpdateMessage = updateMessage("installer_unavailable", language)
                 )
             }
-            log("Could not open installer: ${e.javaClass.simpleName}: ${e.message}")
+            UpdateDiagnostics.setResult(app, updateMessage("installer_unavailable", language), true)
+            UpdateDiagnostics.record(app, "INSTALL_PERMISSION_SETTINGS_ERROR ${e.javaClass.simpleName}: ${e.message}")
+            log("Could not open install permission settings: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -1005,6 +1040,25 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         if (downloadId <= 0L) return
         runOnIO {
             applyDownloadSnapshot(downloadId, UpdateChecker.queryApkDownload(app, downloadId, pendingApkFile()))
+        }
+    }
+
+    private fun restoreUpdateDiagnostics() {
+        val report = UpdateDiagnostics.report(app) ?: return
+        val stage = when (report.outcome) {
+            UpdateDiagnosticOutcome.FAILURE -> UpdateStage.FAILED
+            UpdateDiagnosticOutcome.WAITING_FOR_ANDROID -> UpdateStage.WAITING_FOR_ANDROID
+            UpdateDiagnosticOutcome.SUCCESS -> UpdateStage.COMPLETED
+            UpdateDiagnosticOutcome.INFO -> _state.value.updateStage
+        }
+        update {
+            copy(
+                updateStage = stage,
+                profileUpdateMessage = report.summary,
+                updateDiagnosticSummary = report.summary,
+                updateDiagnosticDetails = report.details.lineSequence().toList().takeLast(8).joinToString("\n"),
+                updateDiagnosticFailure = report.isFailure
+            )
         }
     }
 
@@ -1023,6 +1077,12 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private fun applyDownloadSnapshot(downloadId: Long, snapshot: DownloadSnapshot) {
         if (prefs.getLong(updateDownloadIdKey, -1L) != downloadId) return
+        if (snapshot.state == DownloadState.READY && _state.value.updateStage in setOf(
+                UpdateStage.WAITING_FOR_ANDROID,
+                UpdateStage.COMPLETED,
+                UpdateStage.FAILED
+            )
+        ) return
         val language = _state.value.language
         when (snapshot.state) {
             DownloadState.DOWNLOADING -> update {
@@ -1038,6 +1098,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 val apk = snapshot.file
                 val verificationError = if (apk == null) "apk_missing" else verifyDownloadedApk(apk)
                 if (verificationError == null) {
+                    UpdateDiagnostics.record(app, "DOWNLOAD_READY id=$downloadId file=${apk?.name}")
                     update {
                         copy(
                             isDownloadingUpdate = false,
@@ -1049,6 +1110,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                     }
                     log(if (language == AppLanguage.TR) "Güncelleme indirildi ve doğrulandı: ${apk!!.name}" else "Update downloaded and verified: ${apk!!.name}")
                 } else {
+                    UpdateDiagnostics.setResult(app, updateMessage(verificationError, language), true)
                     update {
                         copy(
                             isDownloadingUpdate = false,
@@ -1062,6 +1124,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
             }
             DownloadState.FAILED -> {
+                UpdateDiagnostics.setResult(app, updateMessage("download_failed", language), true)
                 update {
                     copy(
                         isDownloadingUpdate = false,
