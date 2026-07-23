@@ -16,7 +16,6 @@ permissions:
 
 env:
   DRONEPEAK_REPO: ${{ github.repository }}
-  SIGNING_STORE_FILE: ${{ runner.temp }}/release.jks
   SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
   SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
   SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
@@ -25,6 +24,8 @@ env:
 jobs:
   signed-apk-release:
     runs-on: ubuntu-latest
+    env:
+      SIGNING_STORE_FILE: ${{ runner.temp }}/release.jks
 
     steps:
       - uses: actions/checkout@v4
