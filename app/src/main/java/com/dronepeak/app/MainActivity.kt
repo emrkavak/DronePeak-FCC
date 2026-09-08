@@ -71,6 +71,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -81,18 +83,19 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 
-private val Ink = Color(0xFF080B10)
-private val Panel = Color(0xFF10151D)
-private val PanelAlt = Color(0xFF151B25)
-private val Stroke = Color(0xFF283241)
-private val MutedStroke = Color(0xFF1C2430)
-private val Primary = Color(0xFF5CC8FF)
-private val Success = Color(0xFF3ED598)
-private val Warning = Color(0xFFFFB020)
-private val Danger = Color(0xFFFF5A5F)
-private val TextStrong = Color(0xFFEAF0F7)
-private val TextBody = Color(0xFFA8B3C2)
-private val TextMuted = Color(0xFF6E7A89)
+private val Ink = Color(0xFF0D0F14)
+private val Panel = Color(0xFF161921)
+private val PanelAlt = Color(0xFF1C202B)
+private val Stroke = Color(0xFF2C3242)
+private val MutedStroke = Color(0xFF232835)
+private val Primary = Color(0xFF00E5FF)
+private val PrimaryDark = Color(0xFF00B8D4)
+private val Success = Color(0xFF00E676)
+private val Warning = Color(0xFFFFC400)
+private val Danger = Color(0xFFFF1744)
+private val TextStrong = Color(0xFFF5F7FA)
+private val TextBody = Color(0xFFB0BAC7)
+private val TextMuted = Color(0xFF758193)
 
 private val BottomNavHeight = 60.dp
 private val PageHorizontalPadding = 12.dp
@@ -869,23 +872,31 @@ private fun CommandButton(
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
+    val gradientColors = listOf(color, color.copy(alpha = 0.7f))
     Button(
         onClick = onClick,
         enabled = enabled,
         colors = ButtonDefaults.buttonColors(
-            containerColor = color,
+            containerColor = Color.Transparent,
             contentColor = Ink,
-            disabledContainerColor = color.copy(0.18f),
+            disabledContainerColor = Color.Transparent,
             disabledContentColor = color.copy(0.45f)
         ),
-        shape = RoundedCornerShape(7.dp),
+        contentPadding = PaddingValues(0.dp),
+        shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .height(46.dp)
+            .height(50.dp)
+            .background(
+                brush = Brush.horizontalGradient(
+                    colors = if (enabled) gradientColors else listOf(color.copy(0.15f), color.copy(0.1f))
+                ),
+                shape = RoundedCornerShape(12.dp)
+            )
     ) {
-        Icon(icon, null, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Icon(icon, null, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(text, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

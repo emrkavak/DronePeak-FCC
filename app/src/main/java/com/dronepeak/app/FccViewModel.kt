@@ -560,25 +560,18 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             try {
                 val serial = getOrProbeSerial()
 
-                // Guard 1: serial present and long enough for the 4G payload format.
-                if (serial.length < 6) {
+                // Guard 1: we need *some* serial to embed in the payload.
+                if (serial.isEmpty()) {
                     update {
                         copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "4G için hava aracı bağlı olmalı. Drone'u aç, link kur ve önce Bağlan'a bas." else "4G needs the aircraft connected. Power on the drone, link it, and tap Connect first.")
                     }
-                    log(if (language == AppLanguage.TR) "4G aktivasyon başarısız — seri çok kısa ('$serial'); en az W[AM]xxx model kodu gerekli" else "4G activation failed — aircraft serial too short ('$serial'); need at least a W[AM]xxx model code")
+                    log(if (language == AppLanguage.TR) "4G aktivasyon başarısız — hava aracı seri numarası alınamadı; önce Bağlan'a bas" else "4G activation failed — no aircraft serial detected; power on the drone and tap Connect first")
                     return@runOnIO
                 }
 
-                // Guard 2: model must be in the 4G-capable set.
-                // The model code is the W[AM]xxx prefix (first 5-6 chars).
+                // Advisory only: pull a W[AM]xxx model code from anywhere in the
+                // serial (a full 1581… serial won't contain one). Never blocks.
                 val modelCode = serial.take(5).lowercase()
-                if (modelCode !in MODELS_WITH_4G) {
-                    update {
-                        copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "$modelCode modelinde 4G desteklenmiyor. DJI Cellular Dongle 2 gerekir; bu destek Mavic 4 Pro / Matrice / Inspire 3 tarafındadır." else "4G is not supported on $modelCode. It requires a DJI Cellular Dongle 2, which is only available on Mavic 4 Pro / Matrice / Inspire 3.")
-                    }
-                    log(if (language == AppLanguage.TR) "4G aktivasyon iptal — $modelCode 4G destekli listede değil $MODELS_WITH_4G" else "4G activation aborted — model $modelCode is not in the 4G-capable set $MODELS_WITH_4G")
-                    return@runOnIO
-                }
 
                 // Guard 3: dongle pre-check — fast-fail if the socket does not exist.
                 if (!transport.is4gDonglePresent()) {
