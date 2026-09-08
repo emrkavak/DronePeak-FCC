@@ -199,7 +199,8 @@ object UpdateChecker {
 
         return try {
             val updatesDir = File(context.getExternalFilesDir(null), "updates").apply { mkdirs() }
-            val apkFile = File(updatesDir, "DronePeak-FCC-${info.version}.apk")
+            val ts = System.currentTimeMillis()
+            val apkFile = File(updatesDir, "DronePeak-FCC-${info.version}-$ts.apk")
             // DownloadManager intentionally refuses to overwrite existing files.
             // This is a versioned app-private artifact, so a stale incomplete copy is safe to remove.
             if (apkFile.exists() && !apkFile.delete()) {
@@ -207,7 +208,8 @@ object UpdateChecker {
                 return null
             }
 
-            val request = DownloadManager.Request(Uri.parse(info.downloadUrl))
+            // Append dummy query parameter to bust DownloadManager URL cache
+            val request = DownloadManager.Request(Uri.parse(info.downloadUrl + "?t=$ts"))
                 .setTitle("DronePeak-FCC")
                 .setDescription("v${info.version} indiriliyor")
                 .setMimeType(APK_MIME_TYPE)

@@ -767,6 +767,15 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         // The timestamp is saved ONLY on success — a failed check does NOT
         // consume the rate-limit window, so the user can retry immediately.
         val lastCheck = prefs.getLong("last_update_check", 0)
+        if (force) {
+            UpdateDiagnostics.clearResult(app)
+            update { copy(
+                updateDiagnosticSummary = "",
+                updateDiagnosticDetails = "",
+                updateDiagnosticFailure = false,
+                updateStage = UpdateStage.NONE
+            ) }
+        }
         val now = System.currentTimeMillis()
         if (!force && now - lastCheck < 60 * 60 * 1000 && _state.value.updateChecked && _state.value.updateInfo != null) {
             return
