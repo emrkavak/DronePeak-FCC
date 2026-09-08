@@ -96,7 +96,7 @@ DronePeak versions track upstream with a DronePeak-FCC suffix:
 Rules:
 
 - Increase `versionCode` for every published APK.
-- Use `versionName = upstreamVersion + "-dp.N"`.
+- Keep `versionName` equal to the GitHub release tag without its leading `v`.
 - Tag releases with a leading `v`, for example `v1.5.3-dp.2`.
 
 ## Signing
@@ -153,7 +153,7 @@ cp keystore.properties.example keystore.properties
 ./gradlew assembleDebug test
 ```
 
-2. Update `versionCode`, `versionName`, and `FccViewModel.APP_VERSION`.
+2. Update `versionCode` and `versionName`; the app reads the displayed/current version from `BuildConfig.VERSION_NAME`.
 
 3. Commit and push:
 

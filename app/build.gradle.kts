@@ -14,7 +14,7 @@ android {
         applicationId = "com.dronepeak.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 29
+        versionCode = 30
         versionName = "1.5.5"
         val dronePeakRepo = providers.gradleProperty("dronePeakRepo")
             .orElse(providers.environmentVariable("DRONEPEAK_REPO"))

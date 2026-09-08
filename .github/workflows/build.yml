@@ -50,7 +50,8 @@ jobs:
       contents: write
 
     env:
-      SIGNING_STORE_FILE: ${{ runner.temp }}/release.jks
+      # runner.temp is unavailable while job-level expressions are evaluated.
+      SIGNING_STORE_FILE: ${{ github.workspace }}/release.jks
       SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
       SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
       SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
