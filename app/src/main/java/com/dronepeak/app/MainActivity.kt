@@ -5,10 +5,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -19,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -30,6 +27,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -74,6 +72,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -83,22 +89,21 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 
-private val Ink = Color(0xFF0D0F14)
-private val Panel = Color(0xFF161921)
-private val PanelAlt = Color(0xFF1C202B)
-private val Stroke = Color(0xFF2C3242)
-private val MutedStroke = Color(0xFF232835)
-private val Primary = Color(0xFF00E5FF)
-private val PrimaryDark = Color(0xFF00B8D4)
-private val Success = Color(0xFF00E676)
-private val Warning = Color(0xFFFFC400)
-private val Danger = Color(0xFFFF1744)
-private val TextStrong = Color(0xFFF5F7FA)
-private val TextBody = Color(0xFFB0BAC7)
-private val TextMuted = Color(0xFF758193)
+private val Ink = Color(0xFF07131B)
+private val Panel = Color(0xFF0D1B25)
+private val PanelAlt = Color(0xFF122632)
+private val Stroke = Color(0xFF254252)
+private val MutedStroke = Color(0xFF193543)
+private val Primary = Color(0xFF43D7E8)
+private val Success = Color(0xFF35DB91)
+private val Warning = Color(0xFFFFC857)
+private val Danger = Color(0xFFFF627D)
+private val TextStrong = Color(0xFFF5FAFC)
+private val TextBody = Color(0xFFC4D0D8)
+private val TextMuted = Color(0xFF9AAAB5)
 
-private val BottomNavHeight = 60.dp
-private val PageHorizontalPadding = 12.dp
+private val BottomNavHeight = 72.dp
+private val PageHorizontalPadding = 18.dp
 
 class MainActivity : ComponentActivity() {
 
@@ -182,17 +187,37 @@ private fun FccPage(state: AppState, viewModel: FccViewModel) {
             )
         }
 
-        Spacer(Modifier.height(8.dp))
-        FlightStatusPanel(state, viewModel)
-
-        Spacer(Modifier.height(8.dp))
-        PrimaryActionPanel(state, viewModel)
-
-        Spacer(Modifier.height(8.dp))
-        UtilitiesPanel(state, viewModel)
-
-        Spacer(Modifier.height(8.dp))
-        AutoFccPanel(state, viewModel)
+        Spacer(Modifier.height(12.dp))
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            if (maxWidth >= 720.dp) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(modifier = Modifier.weight(1.15f)) {
+                        PrimaryActionPanel(state, viewModel)
+                        Spacer(Modifier.height(12.dp))
+                        AutoFccPanel(state, viewModel)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        FlightStatusPanel(state, viewModel)
+                        Spacer(Modifier.height(12.dp))
+                        UtilitiesPanel(state, viewModel)
+                    }
+                }
+            } else {
+                Column {
+                    PrimaryActionPanel(state, viewModel)
+                    Spacer(Modifier.height(12.dp))
+                    FlightStatusPanel(state, viewModel)
+                    Spacer(Modifier.height(12.dp))
+                    AutoFccPanel(state, viewModel)
+                    Spacer(Modifier.height(12.dp))
+                    UtilitiesPanel(state, viewModel)
+                }
+            }
+        }
     }
 }
 
@@ -385,8 +410,8 @@ private fun UtilitiesPanel(state: AppState, viewModel: FccViewModel) {
                 Text(
                     if (state.ledStatus.isNotEmpty()) "${ui.statusPrefix}: ${state.ledStatus}" else ui.ledRequiresDji,
                     color = ledStatusColor(state.ledStatus),
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
                 )
             }
         }
@@ -454,7 +479,7 @@ private fun InfoPage(state: AppState, viewModel: FccViewModel) {
                 IconButton(
                     onClick = { viewModel.queryDeviceInfo() },
                     enabled = state.isConnected && !state.isQueryingInfo && !state.isHardwareBusy,
-                    modifier = Modifier.size(38.dp)
+                    modifier = Modifier.size(48.dp)
                 ) {
                     if (state.isQueryingInfo) {
                         CircularProgressIndicator(strokeWidth = 2.dp, color = Primary, modifier = Modifier.size(20.dp))
@@ -469,7 +494,7 @@ private fun InfoPage(state: AppState, viewModel: FccViewModel) {
                     Text(
                         state.deviceInfo,
                         color = TextBody,
-                        fontSize = 11.sp,
+                        fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace,
                         lineHeight = 17.sp,
                         modifier = Modifier.fillMaxWidth()
@@ -548,7 +573,7 @@ private fun UpdatePage(state: AppState, viewModel: FccViewModel) {
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            Text(ui.currentVersion(BuildConfig.VERSION_NAME), color = TextMuted, fontSize = 11.sp)
+                            Text(ui.currentVersion(BuildConfig.VERSION_NAME), color = TextMuted, fontSize = 13.sp)
                         }
                         Icon(
                             if (state.updateAvailable) Icons.Filled.NewReleases else Icons.Filled.CheckCircle,
@@ -609,8 +634,8 @@ private fun UpdatePage(state: AppState, viewModel: FccViewModel) {
                             Text(
                                 state.updateDiagnosticDetails,
                                 color = TextMuted,
-                                fontSize = 10.sp,
-                                lineHeight = 14.sp,
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp,
                                 maxLines = 8,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -674,42 +699,78 @@ private fun PageScaffold(content: @Composable ColumnScope.() -> Unit) {
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = PageHorizontalPadding)
-            .padding(top = 18.dp, bottom = BottomNavHeight + 18.dp),
+            .padding(top = 16.dp, bottom = BottomNavHeight + 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        content = content
-    )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 1180.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            content = content
+        )
+    }
 }
 
 @Composable
 private fun AppHeader(state: AppState, viewModel: FccViewModel, ui: UiText) {
-    PanelCard(padding = 12.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "DronePeak-FCC",
-                    color = TextStrong,
-                    fontSize = 21.sp,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    if (state.controllerModel.isNotEmpty()) "v${BuildConfig.VERSION_NAME} / ${state.controllerModel}" else "v${BuildConfig.VERSION_NAME}",
-                    color = TextMuted,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                LanguageSelector(
-                    selected = state.language,
-                    onSelected = { viewModel.setLanguage(it) }
-                )
-                Spacer(Modifier.height(6.dp))
-                StatusChip(ui.rcPanel, Primary)
+    PanelCard(padding = 16.dp) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            if (maxWidth >= 600.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    HeaderBrand(state, Modifier.weight(1f))
+                    HeaderControls(state, viewModel, ui)
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    HeaderBrand(state)
+                    Spacer(Modifier.height(12.dp))
+                    HeaderControls(state, viewModel, ui, Modifier.fillMaxWidth())
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun HeaderBrand(state: AppState, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(
+            "DronePeak-FCC",
+            color = TextStrong,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Black,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            if (state.controllerModel.isNotEmpty()) "v${BuildConfig.VERSION_NAME} / ${state.controllerModel}" else "v${BuildConfig.VERSION_NAME}",
+            color = TextBody,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun HeaderControls(
+    state: AppState,
+    viewModel: FccViewModel,
+    ui: UiText,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StatusChip(connectionLabel(state, ui), connectionColor(state))
+        Spacer(Modifier.width(10.dp))
+        LanguageSelector(
+            selected = state.language,
+            onSelected = { viewModel.setLanguage(it) }
+        )
     }
 }
 
@@ -720,16 +781,23 @@ private fun LanguageSelector(selected: AppLanguage, onSelected: (AppLanguage) ->
             val isSelected = language == selected
             Surface(
                 color = if (isSelected) Primary.copy(0.18f) else PanelAlt,
-                shape = RoundedCornerShape(6.dp),
+                shape = RoundedCornerShape(10.dp),
                 border = BorderStroke(1.dp, if (isSelected) Primary.copy(0.65f) else MutedStroke),
-                modifier = Modifier.clickable { onSelected(language) }
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .semantics {
+                        role = Role.Button
+                        this.selected = isSelected
+                        contentDescription = language.name
+                    }
+                    .clickable { onSelected(language) }
             ) {
                 Text(
                     "${language.flag} ${language.shortName}",
                     color = if (isSelected) TextStrong else TextBody,
-                    fontSize = 11.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
                 )
             }
         }
@@ -748,12 +816,12 @@ private fun PageTitle(title: String, icon: ImageVector) {
 @Composable
 private fun PanelCard(
     modifier: Modifier = Modifier,
-    padding: androidx.compose.ui.unit.Dp = 14.dp,
+    padding: androidx.compose.ui.unit.Dp = 18.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
         color = Panel,
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, Stroke),
         modifier = modifier.fillMaxWidth()
     ) {
@@ -769,9 +837,9 @@ private fun PanelCard(
 @Composable
 private fun SectionHeader(title: String, icon: ImageVector) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = Primary, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(title, color = TextStrong, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Icon(icon, null, tint = Primary, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(title, color = TextStrong, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -779,15 +847,15 @@ private fun SectionHeader(title: String, icon: ImageVector) {
 private fun StatusMetric(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Surface(
         color = PanelAlt,
-        shape = RoundedCornerShape(7.dp),
+        shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, MutedStroke),
-        modifier = modifier.height(62.dp)
+        modifier = modifier.heightIn(min = 72.dp)
     ) {
         Column(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(horizontal = 10.dp)
         ) {
-            Text(label, color = TextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(label, color = TextMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StatusDot(color)
@@ -795,7 +863,7 @@ private fun StatusMetric(label: String, value: String, color: Color, modifier: M
                 Text(
                     value,
                     color = color,
-                    fontSize = 13.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -812,12 +880,12 @@ private fun InfoRowCompact(label: String, value: String, valueColor: Color = Tex
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, color = TextMuted, fontSize = 12.sp, maxLines = 1)
+        Text(label, color = TextMuted, fontSize = 13.sp, maxLines = 1)
         Spacer(Modifier.width(12.dp))
         Text(
             value,
             color = valueColor,
-            fontSize = 12.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.End,
             maxLines = 1,
@@ -835,14 +903,21 @@ private fun ToggleRow(
     enabled: Boolean,
     onChange: (Boolean) -> Unit
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics {
+                stateDescription = if (checked) "On" else "Off"
+            }
+    ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = TextStrong, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text(title, color = TextStrong, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 detail,
                 color = if (checked) Success else TextMuted,
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
@@ -917,14 +992,14 @@ private fun SecondaryButton(
             disabledContentColor = TextMuted
         ),
         border = BorderStroke(1.dp, if (enabled) color.copy(0.55f) else MutedStroke),
-        shape = RoundedCornerShape(7.dp),
+        shape = RoundedCornerShape(12.dp),
         modifier = modifier
             .fillMaxWidth()
-            .height(42.dp)
+            .heightIn(min = 48.dp)
     ) {
-        Icon(icon, null, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(7.dp))
-        Text(text, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Icon(icon, null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -933,13 +1008,15 @@ private fun CompactTextButton(text: String, icon: ImageVector, enabled: Boolean,
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .semantics { role = Role.Button }
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 6.dp)
+            .padding(horizontal = 8.dp, vertical = 10.dp)
     ) {
         Icon(icon, null, tint = if (enabled) Primary else TextMuted, modifier = Modifier.size(15.dp))
         Spacer(Modifier.width(6.dp))
-        Text(text, color = if (enabled) Primary else TextMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(text, color = if (enabled) Primary else TextMuted, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -947,16 +1024,18 @@ private fun CompactTextButton(text: String, icon: ImageVector, enabled: Boolean,
 private fun NoticeRow(title: String, detail: String, color: Color, icon: ImageVector) {
     Surface(
         color = color.copy(0.10f),
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, color.copy(0.35f)),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite }
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(12.dp)) {
             Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, color = color, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                Text(detail, color = TextBody, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, color = color, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(detail, color = TextBody, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -972,8 +1051,8 @@ private fun BodyText(
     Text(
         text,
         color = color,
-        fontSize = 12.sp,
-        lineHeight = 17.sp,
+        fontSize = 14.sp,
+        lineHeight = 20.sp,
         textAlign = textAlign,
         modifier = modifier
     )
@@ -981,10 +1060,14 @@ private fun BodyText(
 
 @Composable
 private fun ProgressBlock(progress: Float, label: String) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Polite }
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text(label, color = Primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Text("${(progress * 100).toInt()}%", color = TextMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Text(label, color = Primary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text("${(progress * 100).toInt()}%", color = TextMuted, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
         }
         Spacer(Modifier.height(8.dp))
         Box(
@@ -1056,8 +1139,8 @@ private fun LogLine(entry: String) {
     Text(
         entry,
         color = color,
-        fontSize = 11.sp,
-        lineHeight = 16.sp,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
         fontFamily = FontFamily.Monospace,
         modifier = Modifier.fillMaxWidth()
     )
@@ -1075,17 +1158,10 @@ private fun DividerLine(alpha: Float = 1f) {
 
 @Composable
 private fun StatusDot(color: Color) {
-    val transition = rememberInfiniteTransition(label = "statusDot")
-    val alpha by transition.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "statusDotAlpha"
-    )
     Box(
         modifier = Modifier
-            .size(7.dp)
-            .background(color.copy(alpha), CircleShape)
+            .size(8.dp)
+            .background(color, CircleShape)
     )
 }
 
@@ -1093,15 +1169,15 @@ private fun StatusDot(color: Color) {
 private fun StatusChip(text: String, color: Color) {
     Surface(
         color = color.copy(0.12f),
-        shape = RoundedCornerShape(6.dp),
+        shape = RoundedCornerShape(10.dp),
         border = BorderStroke(1.dp, color.copy(0.35f))
     ) {
         Text(
             text,
             color = color,
-            fontSize = 10.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
         )
     }
 }
@@ -1142,20 +1218,25 @@ private fun BottomNavBar(
                     modifier = Modifier
                         .weight(1f)
                         .height(BottomNavHeight)
-                        .clip(RoundedCornerShape(7.dp))
+                        .clip(RoundedCornerShape(12.dp))
+                        .semantics {
+                            role = Role.Tab
+                            this.selected = currentPage == index
+                            contentDescription = item.label
+                        }
                         .clickable { onPageSelected(index) }
                 ) {
                     Icon(
                         item.icon,
                         item.label,
                         tint = if (selected) item.color else TextMuted,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(23.dp)
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
                         item.label,
                         color = if (selected) item.color else TextMuted,
-                        fontSize = 9.sp,
+                        fontSize = 12.sp,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
