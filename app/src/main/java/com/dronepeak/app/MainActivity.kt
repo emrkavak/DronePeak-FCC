@@ -548,7 +548,7 @@ private fun UpdatePage(state: AppState, viewModel: FccViewModel) {
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            Text(ui.currentVersion(FccViewModel.APP_VERSION), color = TextMuted, fontSize = 11.sp)
+                            Text(ui.currentVersion(BuildConfig.VERSION_NAME), color = TextMuted, fontSize = 11.sp)
                         }
                         Icon(
                             if (state.updateAvailable) Icons.Filled.NewReleases else Icons.Filled.CheckCircle,
@@ -694,7 +694,7 @@ private fun AppHeader(state: AppState, viewModel: FccViewModel, ui: UiText) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    if (state.controllerModel.isNotEmpty()) "v${FccViewModel.APP_VERSION} / ${state.controllerModel}" else "v${FccViewModel.APP_VERSION}",
+                    if (state.controllerModel.isNotEmpty()) "v${BuildConfig.VERSION_NAME} / ${state.controllerModel}" else "v${BuildConfig.VERSION_NAME}",
                     color = TextMuted,
                     fontSize = 11.sp,
                     maxLines = 1,

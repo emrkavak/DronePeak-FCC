@@ -54,6 +54,19 @@ jobs:
       - name: Build signed release APK
         run: ./gradlew assembleRelease testDebugUnitTest --no-daemon
 
+      - name: Verify release metadata and signature
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -type f | head -1)"
+          METADATA="app/build/outputs/apk/release/output-metadata.json"
+          EXPECTED_VERSION="${RELEASE_TAG#v}"
+          test -n "$APK" && test -f "$APK" && test -f "$METADATA"
+          test "$(jq -r '.elements[0].versionName' "$METADATA")" = "$EXPECTED_VERSION"
+          test "$(jq -r '.elements[0].versionCode' "$METADATA")" = "30"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -1 | grep -F "package: name='com.dronepeak.app'"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+
       - name: Prepare release asset
         env:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -68,3 +81,5 @@ jobs:
           name: DronePeak ${{ github.event.inputs.tag || github.ref_name }}
           files: release/*.apk
           generate_release_notes: true
+          overwrite_files: true
+          fail_on_unmatched_files: true

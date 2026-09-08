@@ -87,8 +87,6 @@ data class AppState(
 class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     companion object {
-        const val APP_VERSION = "1.5.3-dp.6"
-
         /**
          * Aircraft model codes known to support DJI Cellular Dongle 2 / 4G.
          * The Mini series (wa150, wa140, wm16x) does NOT support 4G — the
@@ -796,7 +794,8 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             // Save the timestamp only on success.
             prefs.edit().putLong("last_update_check", System.currentTimeMillis()).apply()
 
-            val isNewer = info.isNewerThan(APP_VERSION)
+            val currentVersion = BuildConfig.VERSION_NAME
+            val isNewer = info.isNewerThan(currentVersion)
             update {
                 copy(
                     updateInfo = info,
@@ -808,7 +807,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             if (isNewer) {
                 log(if (language == AppLanguage.TR) "DronePeak-FCC güncellemesi var: v${info.version}" else "DronePeak-FCC update available: v${info.version}")
             } else {
-                log(if (language == AppLanguage.TR) "DronePeak-FCC güncel (v$APP_VERSION)" else "DronePeak-FCC is up to date (v$APP_VERSION)")
+                log(if (language == AppLanguage.TR) "DronePeak-FCC güncel (v$currentVersion)" else "DronePeak-FCC is up to date (v$currentVersion)")
             }
         }
     }
