@@ -189,7 +189,11 @@ class DumlBuilder {
             if ((cmdType and 0x80) == 0) return null // response bit not set
 
             if (response[6] != request[6] || response[7] != request[7]) return null // sequence
-            if (response[4] != request[5] || response[5] != request[4]) return null // reversed routing
+            val requestDestination = request[5].toInt() and 0x1F
+            if (response[5] != request[4]) return null
+            // Device type 0 means ANY. A concrete responder identifies itself
+            // as sender instead of echoing sender=ANY.
+            if (requestDestination != 0 && response[4] != request[5]) return null
             if (response[9] != request[9] || response[10] != request[10]) return null // cmd set/id
 
             val payloadLength = totalLength - 13
@@ -297,29 +301,18 @@ class DumlTransport {
             socket = Socket()
             socket.connect(InetSocketAddress(HOST, effectivePort), CONNECT_TIMEOUT_MS)
             socket.tcpNoDelay = true
-            socket.soTimeout = readWindowMs
-
             socket.getOutputStream().apply { write(frame); flush() }
-
             val input = socket.getInputStream()
-            val header = readBytes(input, 11) ?: return null
-
-            // Guard against a short read returning fewer than 3 bytes —
-            // indexing header[0..2] for magic/length would otherwise throw.
-            if (header.size < 3) return null
-
-            // Verify magic byte before trusting the encoded length enough to read more
-            if (header[0] != 0x55.toByte()) return null
-
-            // Extract total length from bytes 1-2 (11-bit LE) to know how much more to read
-            val totalLength = (header[1].toInt() and 0xFF) or ((header[2].toInt() and 0x03) shl 8)
-            if (totalLength < 13 || totalLength > 1023) return null
-
-            // Read the rest (payload + 2 CRC bytes)
-            val remaining = readBytes(input, totalLength - 11) ?: return null
-            val response = header + remaining
-
-            return DumlBuilder.validateResponse(frame, response)
+            val deadline = System.currentTimeMillis() + readWindowMs
+            while (System.currentTimeMillis() < deadline) {
+                val remainingMs = (deadline - System.currentTimeMillis()).coerceAtLeast(1L)
+                socket.soTimeout = remainingMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                val response = readNextDumlFrame(input) ?: return null
+                DumlBuilder.validateResponse(frame, response)?.let { return it }
+                // Telemetry may arrive before the command response. Continue
+                // until a matching sequence/command frame or the deadline.
+            }
+            return null
 
         } catch (_: IOException) {
             return null
@@ -717,6 +710,26 @@ class DumlTransport {
             read += n
         }
         return out
+    }
+
+    /** Reads the next CRC-valid DUML frame while skipping unrelated stream bytes. */
+    private fun readNextDumlFrame(input: java.io.InputStream): ByteArray? {
+        while (true) {
+            val first = input.read()
+            if (first < 0) return null
+            if (first != 0x55) continue
+
+            val prefix = readBytes(input, 3) ?: return null
+            val firstFour = byteArrayOf(0x55, prefix[0], prefix[1], prefix[2])
+            if (DumlBuilder.crc8(firstFour, 0, 3) != (firstFour[3].toInt() and 0xFF)) continue
+
+            val totalLength = (firstFour[1].toInt() and 0xFF) or
+                ((firstFour[2].toInt() and 0x03) shl 8)
+            if (totalLength !in 13..1023) continue
+
+            val remaining = readBytes(input, totalLength - 4) ?: return null
+            return firstFour + remaining
+        }
     }
 
     companion object {

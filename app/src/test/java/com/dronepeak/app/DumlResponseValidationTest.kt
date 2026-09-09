@@ -103,6 +103,25 @@ class DumlResponseValidationTest {
     }
 
     @Test
+    fun `any destination accepts the concrete responding device`() {
+        val anyRequest = buildRawFrame(
+            sender = 0x82, dst = 0x00, seq = 4321,
+            cmdType = 0x20, cmdSet = 0x00, cmdId = 0x01,
+            payload = ByteArray(0)
+        )
+        val concreteResponse = buildRawFrame(
+            sender = 0x03, dst = 0x82, seq = 4321,
+            cmdType = 0x80, cmdSet = 0x00, cmdId = 0x01,
+            payload = byteArrayOf(1, 2, 3, 4)
+        )
+
+        assertArrayEquals(
+            byteArrayOf(1, 2, 3, 4),
+            DumlBuilder.validateResponse(anyRequest, concreteResponse)
+        )
+    }
+
+    @Test
     fun `command set mismatch is rejected`() {
         val response = buildRawFrame(
             sender = 0x28, dst = 0x01, seq = 1234,

@@ -54,7 +54,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -64,7 +63,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -174,6 +176,7 @@ private fun AppRoot(viewModel: FccViewModel) {
 @Composable
 private fun FccPage(state: AppState, viewModel: FccViewModel) {
     val ui = TextCatalog.ui(state.language)
+    var toolsExpanded by rememberSaveable { mutableStateOf(false) }
     PageScaffold {
         AppHeader(state, viewModel, ui)
 
@@ -188,34 +191,179 @@ private fun FccPage(state: AppState, viewModel: FccViewModel) {
         }
 
         Spacer(Modifier.height(12.dp))
+        HomeHeroPanel(state, viewModel)
+        Spacer(Modifier.height(12.dp))
+        HomeQuickActions(
+            state = state,
+            viewModel = viewModel,
+            toolsExpanded = toolsExpanded,
+            onToggleTools = { toolsExpanded = !toolsExpanded }
+        )
+
+        AnimatedVisibility(
+            visible = toolsExpanded,
+            enter = fadeIn(tween(180)) + expandVertically(tween(180)),
+            exit = fadeOut(tween(120)) + shrinkVertically(tween(120))
+        ) {
+            Column {
+                Spacer(Modifier.height(12.dp))
+                KeepalivePanel(state, viewModel)
+                Spacer(Modifier.height(12.dp))
+                UtilitiesPanel(state, viewModel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeHeroPanel(state: AppState, viewModel: FccViewModel) {
+    val ui = TextCatalog.ui(state.language)
+    val title = when {
+        state.isBusy -> if (state.language == AppLanguage.TR) "İşlem devam ediyor" else "Operation in progress"
+        !state.isConnected -> if (state.language == AppLanguage.TR) "Kumandayı bağla" else "Connect your controller"
+        state.isFccEnabled -> if (state.language == AppLanguage.TR) "FCC aktif" else "FCC is active"
+        else -> if (state.language == AppLanguage.TR) "FCC'ye hazır" else "Ready for FCC"
+    }
+    val detail = state.message.ifEmpty {
+        when {
+            !state.isConnected -> ui.connectHint
+            state.isFccEnabled -> ui.fccActiveHint
+            else -> ui.readyApplyFcc
+        }
+    }
+
+    PanelCard(padding = 24.dp) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            StatusChip(connectionLabel(state, ui), connectionColor(state))
+            StatusChip(if (state.isFccEnabled) "FCC" else "CE", if (state.isFccEnabled) Success else TextBody)
+        }
+        Spacer(Modifier.height(18.dp))
+
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            if (maxWidth >= 720.dp) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(28.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1.2f)) {
+                        HeroCopy(title, detail)
+                    }
+                    HomeDeviceSummary(state, ui, Modifier.weight(1f))
+                }
+            } else {
+                Column {
+                    HeroCopy(title, detail)
+                    Spacer(Modifier.height(18.dp))
+                    HomeDeviceSummary(state, ui)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        if (state.isBusy) {
+            ProgressBlock(state.busyProgress, detail.ifEmpty { ui.working })
+        } else {
+            when {
+                !state.isConnected -> CommandButton(ui.connect, Icons.Filled.Wifi, Primary, !state.isHardwareBusy) {
+                    viewModel.connect()
+                }
+                state.isFccEnabled -> CommandButton(ui.stopFcc, Icons.Filled.PowerSettingsNew, Danger, !state.isHardwareBusy) {
+                    viewModel.disableFcc()
+                }
+                else -> CommandButton(ui.enableFcc, Icons.Filled.Radio, Success, !state.isHardwareBusy) {
+                    viewModel.enableFcc()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroCopy(title: String, detail: String) {
+    Column {
+        Text(title, color = TextStrong, fontSize = 30.sp, fontWeight = FontWeight.Black)
+        Spacer(Modifier.height(8.dp))
+        BodyText(detail, TextBody)
+    }
+}
+
+@Composable
+private fun HomeDeviceSummary(state: AppState, ui: UiText, modifier: Modifier = Modifier) {
+    Surface(
+        color = PanelAlt,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MutedStroke),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            InfoRowCompact(ui.controller, state.controllerModel.ifEmpty { ui.unknown })
+            Spacer(Modifier.height(10.dp))
+            InfoRowCompact(ui.aircraftSerial, state.aircraftSerial.ifEmpty { ui.notDetected })
+            Spacer(Modifier.height(10.dp))
+            InfoRowCompact(ui.keep, if (state.isKeepaliveRunning) ui.on else ui.off, if (state.isKeepaliveRunning) Success else TextMuted)
+        }
+    }
+}
+
+@Composable
+private fun HomeQuickActions(
+    state: AppState,
+    viewModel: FccViewModel,
+    toolsExpanded: Boolean,
+    onToggleTools: () -> Unit
+) {
+    val ui = TextCatalog.ui(state.language)
+    val toolsLabel = if (state.language == AppLanguage.TR) {
+        if (toolsExpanded) "Araçları gizle" else "Araçları göster"
+    } else {
+        if (toolsExpanded) "Hide tools" else "Show tools"
+    }
+
+    PanelCard {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             if (maxWidth >= 720.dp) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.Top
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1.15f)) {
-                        PrimaryActionPanel(state, viewModel)
-                        Spacer(Modifier.height(12.dp))
-                        AutoFccPanel(state, viewModel)
+                        ToggleRow("Auto-FCC", ui.autoFccDetail, state.autoFcc, true) { viewModel.toggleAutoFcc() }
                     }
-                    Column(modifier = Modifier.weight(1f)) {
-                        FlightStatusPanel(state, viewModel)
-                        Spacer(Modifier.height(12.dp))
-                        UtilitiesPanel(state, viewModel)
+                    SecondaryButton("DJI Fly", Icons.Filled.Flight, Success, modifier = Modifier.weight(0.8f)) {
+                        viewModel.launchDjiFly()
                     }
+                    SecondaryButton(toolsLabel, Icons.Filled.Settings, Primary, modifier = Modifier.weight(0.9f), onClick = onToggleTools)
                 }
             } else {
                 Column {
-                    PrimaryActionPanel(state, viewModel)
+                    ToggleRow("Auto-FCC", ui.autoFccDetail, state.autoFcc, true) { viewModel.toggleAutoFcc() }
                     Spacer(Modifier.height(12.dp))
-                    FlightStatusPanel(state, viewModel)
-                    Spacer(Modifier.height(12.dp))
-                    AutoFccPanel(state, viewModel)
-                    Spacer(Modifier.height(12.dp))
-                    UtilitiesPanel(state, viewModel)
+                    SecondaryButton("DJI Fly", Icons.Filled.Flight, Success) { viewModel.launchDjiFly() }
+                    Spacer(Modifier.height(10.dp))
+                    SecondaryButton(toolsLabel, Icons.Filled.Settings, Primary, onClick = onToggleTools)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun KeepalivePanel(state: AppState, viewModel: FccViewModel) {
+    val ui = TextCatalog.ui(state.language)
+    PanelCard {
+        ToggleRow(
+            title = "Keepalive",
+            detail = if (state.isKeepaliveRunning) ui.keepaliveActive else ui.keepaliveInactive,
+            checked = state.isKeepaliveRunning,
+            enabled = state.isConnected && !state.isHardwareBusy,
+            onChange = { enabled -> if (enabled) viewModel.startKeepalive() else viewModel.stopKeepalive() }
+        )
+        if (state.isConnected && state.isFccEnabled) {
+            Spacer(Modifier.height(12.dp))
+            SecondaryButton(ui.reapply, Icons.Filled.Refresh, Primary, !state.isHardwareBusy) {
+                viewModel.enableFcc()
             }
         }
     }
@@ -458,51 +606,75 @@ private fun InfoPage(state: AppState, viewModel: FccViewModel) {
         PageTitle(ui.deviceInfo, Icons.Outlined.Info)
         Spacer(Modifier.height(12.dp))
 
-        PanelCard {
-            SectionHeader(ui.connection, Icons.Filled.Info)
-            Spacer(Modifier.height(12.dp))
-            InfoRowCompact(ui.controller, state.controllerModel.ifEmpty { ui.unknown })
-            Spacer(Modifier.height(8.dp))
-            InfoRowCompact(ui.status, if (state.isConnected) ui.connected else ui.disconnected, connectionColor(state))
-            Spacer(Modifier.height(8.dp))
-            InfoRowCompact(ui.aircraftSerial, state.aircraftSerial.ifEmpty { ui.notDetected })
-        }
+        NoticeRow(
+            title = if (state.isConnected) ui.connected else ui.disconnected,
+            detail = if (state.isConnected) ui.queryVersionHint else ui.connectFirst,
+            color = connectionColor(state),
+            icon = if (state.isConnected) Icons.Filled.CheckCircle else Icons.Filled.CloudOff
+        )
+        Spacer(Modifier.height(12.dp))
 
-        Spacer(Modifier.height(10.dp))
-        PanelCard {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                SectionHeader(ui.version, Icons.Filled.SystemUpdate)
-                IconButton(
-                    onClick = { viewModel.queryDeviceInfo() },
-                    enabled = state.isConnected && !state.isQueryingInfo && !state.isHardwareBusy,
-                    modifier = Modifier.size(48.dp)
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            if (maxWidth >= 720.dp) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.Top
                 ) {
-                    if (state.isQueryingInfo) {
-                        CircularProgressIndicator(strokeWidth = 2.dp, color = Primary, modifier = Modifier.size(20.dp))
-                    } else {
-                        Icon(Icons.Filled.Refresh, ui.query, tint = Primary, modifier = Modifier.size(20.dp))
-                    }
+                    ConnectionInfoCard(state, ui, Modifier.weight(1f))
+                    VersionInfoCard(state, viewModel, ui, Modifier.weight(1f))
+                }
+            } else {
+                Column {
+                    ConnectionInfoCard(state, ui)
+                    Spacer(Modifier.height(12.dp))
+                    VersionInfoCard(state, viewModel, ui)
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            when {
-                state.deviceInfo.isNotEmpty() -> {
-                    Text(
-                        state.deviceInfo,
-                        color = TextBody,
-                        fontSize = 13.sp,
-                        fontFamily = FontFamily.Monospace,
-                        lineHeight = 17.sp,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                !state.isConnected -> BodyText(ui.connectFirst, TextMuted)
-                else -> BodyText(ui.queryVersionHint)
-            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionInfoCard(state: AppState, ui: UiText, modifier: Modifier = Modifier) {
+    PanelCard(modifier) {
+        SectionHeader(ui.connection, Icons.Filled.Info)
+        Spacer(Modifier.height(16.dp))
+        InfoRowCompact(ui.controller, state.controllerModel.ifEmpty { ui.unknown })
+        Spacer(Modifier.height(10.dp))
+        InfoRowCompact(ui.status, if (state.isConnected) ui.connected else ui.disconnected, connectionColor(state))
+        Spacer(Modifier.height(10.dp))
+        InfoRowCompact(ui.aircraftSerial, state.aircraftSerial.ifEmpty { ui.notDetected })
+    }
+}
+
+@Composable
+private fun VersionInfoCard(state: AppState, viewModel: FccViewModel, ui: UiText, modifier: Modifier = Modifier) {
+    PanelCard(modifier) {
+        SectionHeader(ui.version, Icons.Filled.SystemUpdate)
+        Spacer(Modifier.height(16.dp))
+        when {
+            state.isQueryingInfo -> ProgressSpinner(ui.working)
+            state.deviceInfo.isNotEmpty() -> Text(
+                state.deviceInfo,
+                color = TextBody,
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                lineHeight = 18.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { liveRegion = LiveRegionMode.Polite }
+            )
+            else -> BodyText(if (state.isConnected) ui.queryVersionHint else ui.connectFirst, TextMuted)
+        }
+        Spacer(Modifier.height(16.dp))
+        SecondaryButton(
+            text = ui.query,
+            icon = Icons.Filled.Refresh,
+            color = Primary,
+            enabled = !state.isQueryingInfo && !state.isHardwareBusy
+        ) {
+            viewModel.queryDeviceInfo()
         }
     }
 }

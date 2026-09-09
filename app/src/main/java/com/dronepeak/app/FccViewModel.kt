@@ -694,14 +694,29 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * (cmd_set=0, cmd_id=1). Uses sendAndReceive to capture the response.
      */
     fun queryDeviceInfo() {
-        if (!isControllerReachable()) return
+        val language = _state.value.language
+        if (!isControllerReachable()) {
+            update {
+                copy(
+                    isQueryingInfo = false,
+                    deviceInfo = if (language == AppLanguage.TR) {
+                        "Önce ana ekrandan kumandaya bağlan."
+                    } else {
+                        "Connect to the controller from the home screen first."
+                    }
+                )
+            }
+            return
+        }
         if (!beginHardwareOp()) {
             log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
+            update {
+                copy(deviceInfo = if (language == AppLanguage.TR) "Kumanda meşgul. Birkaç saniye sonra tekrar dene." else "Controller is busy. Try again in a few seconds.")
+            }
             return
         }
 
-        val language = _state.value.language
-        update { copy(isQueryingInfo = true) }
+        update { copy(isQueryingInfo = true, deviceInfo = "") }
         log(if (language == AppLanguage.TR) "Cihaz bilgisi sorgulanıyor..." else "Querying device info...")
 
         runOnIO {
@@ -714,15 +729,27 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
                 val frame = profile.frames.first()
 
-                val response = transport.sendAndReceive(frame, profile.readWindowMs)
+                var response: ByteArray? = null
+                repeat(2) {
+                    if (response == null) response = transport.sendAndReceive(frame, profile.readWindowMs)
+                }
 
                 if (response == null || response.isEmpty()) {
-                    update { copy(isQueryingInfo = false, deviceInfo = if (language == AppLanguage.TR) "Kumandadan yanıt yok" else "No response from controller") }
+                    update {
+                        copy(
+                            isQueryingInfo = false,
+                            deviceInfo = if (language == AppLanguage.TR) {
+                                "Kumandadan sürüm yanıtı alınamadı. Drone ve DJI Fly bağlantısını kontrol edip tekrar dene."
+                            } else {
+                                "No version response. Check the aircraft and DJI Fly connection, then try again."
+                            }
+                        )
+                    }
                     log(if (language == AppLanguage.TR) "Cihaz bilgisi: yanıt yok" else "Device info: no response")
                     return@runOnIO
                 }
 
-                val info = formatVersionResponse(response)
+                val info = formatVersionResponse(response!!)
                 update { copy(isQueryingInfo = false, deviceInfo = info) }
                 log(if (language == AppLanguage.TR) "Cihaz bilgisi alındı: ${response.size} bayt" else "Device info received: ${response.size} bytes")
             } catch (e: Exception) {
