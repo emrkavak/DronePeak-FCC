@@ -1,0 +1,1424 @@
+diff --git a/app/src/main/java/com/dronepeak/app/FccViewModel.kt b/app/src/main/java/com/freefcc/app/FccViewModel.kt
+index 9f839f6..ba6ea73 100644
+--- a/app/src/main/java/com/dronepeak/app/FccViewModel.kt
++++ b/app/src/main/java/com/freefcc/app/FccViewModel.kt
+@@ -1,10 +1,8 @@
+-package com.dronepeak.app
++package com.freefcc.app
+ 
+ import android.app.Application
+ import android.content.Context
+-import android.content.pm.PackageManager
+ import android.os.Build
+-import android.provider.Settings
+ import androidx.lifecycle.AndroidViewModel
+ import androidx.lifecycle.viewModelScope
+ import kotlinx.coroutines.Dispatchers
+@@ -14,8 +12,6 @@ import kotlinx.coroutines.flow.StateFlow
+ import kotlinx.coroutines.flow.asStateFlow
+ import kotlinx.coroutines.launch
+ import java.text.SimpleDateFormat
+-import java.io.File
+-import java.security.MessageDigest
+ import java.util.Date
+ import java.util.Locale
+ 
+@@ -26,20 +22,7 @@ import java.util.Locale
+  * with collectAsStateWithLifecycle(). Every field here represents something
+  * the UI needs to render.
+  */
+-enum class UpdateStage {
+-    NONE,
+-    DOWNLOADING,
+-    VERIFYING,
+-    PREPARING_INSTALL,
+-    READY,
+-    NEEDS_INSTALL_PERMISSION,
+-    WAITING_FOR_ANDROID,
+-    COMPLETED,
+-    FAILED
+-}
+-
+ data class AppState(
+-    val language: AppLanguage = AppLanguage.TR,
+     val status: String = "idle",
+     val message: String = "",
+     val isConnected: Boolean = false,
+@@ -50,6 +33,8 @@ data class AppState(
+     val isHardwareBusy: Boolean = false,
+     val busyProgress: Float = 0f,
+     val aircraftSerial: String = "",
++    val manualSerial: String = "",
++    val isProbingSerial: Boolean = false,
+     val controllerModel: String = "",
+     val deviceInfo: String = "",
+     val isQueryingInfo: Boolean = false,
+@@ -63,11 +48,6 @@ data class AppState(
+     val isDownloadingUpdate: Boolean = false,
+     val updateDownloadProgress: Float = 0f,
+     val isUpdateDownloaded: Boolean = false,
+-    val profileUpdateMessage: String = "",
+-    val updateStage: UpdateStage = UpdateStage.NONE,
+-    val updateDiagnosticSummary: String = "",
+-    val updateDiagnosticDetails: String = "",
+-    val updateDiagnosticFailure: Boolean = false,
+     val updateAvailable: Boolean = false,
+     val updateChecked: Boolean = false,
+     // Keepalive state
+@@ -87,19 +67,26 @@ data class AppState(
+ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+ 
+     companion object {
+-        const val APP_VERSION = "1.5.3-dp.6"
++        const val APP_VERSION = "1.5.5"
+ 
+         /**
+-         * Aircraft model codes known to support DJI Cellular Dongle 2 / 4G.
+-         * The Mini series (wa150, wa140, wm16x) does NOT support 4G — the
+-         * cellular module is enterprise hardware only. Sending 4G frames to a
+-         * non-4G aircraft wastes the user's time and produces a confusing
+-         * "frames written but 4G didn't activate" message.
++         * Aircraft model codes *hinted* to support the DJI Cellular Dongle 2 / 4G.
++         *
++         * This is ADVISORY ONLY — it is not a hard gate. Two reasons:
++         *  1. It cannot be applied reliably. probeSerial() usually returns the
++         *     full 1581… factory serial, which does not contain a W[AM]xxx model
++         *     code at all, so there is nothing here to match against.
++         *  2. The codes themselves are uncertain. Public sources disagree on what
++         *     wa233/wa234 map to, and DJI ships the Cellular Dongle 2 for the
++         *     Mini 4 Pro (wa140) with a mounting kit — contrary to the old
++         *     assumption that the Mini series has no cellular option.
++         *     Source: DJI Cellular Dongle 2 listed compatibility — Air 3,
++         *     Air 3S, Mini 4 Pro, Matrice 4T, Matrice 4E.
+          *
+-         * Sources: DJI product list, captured profiles (only wa341 confirmed
+-         * working on real hardware). wa233/wa234 = Matrice 300/350 series,
+-         * wm630 = Inspire 3, wa341 = Mavic 4 Pro. All are DJI enterprise models
+-         * that ship with or accept the Cellular Dongle 2.
++         * The authoritative "can this aircraft do 4G" signal is
++         * DumlTransport.is4gDonglePresent(): if the /duss/mb/0x205 socket is
++         * connectable, a cellular module is attached. That is what actually
++         * gates activation. This set only lets us log a helpful note.
+          */
+         private val MODELS_WITH_4G = setOf("wa341", "wa233", "wa234", "wm630", "wa140")
+     }
+@@ -108,13 +95,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+     val state: StateFlow<AppState> = _state.asStateFlow()
+ 
+     private val transport = DumlTransport()
+-    private val prefs = app.getSharedPreferences("dronepeak", Context.MODE_PRIVATE)
+-    private val updateDownloadIdKey = "update_download_id"
+-    private val updateApkPathKey = "update_apk_path"
+-    private val updateVersionKey = "update_version"
+-    private val updateSha256Key = "update_sha256"
+-    private val text: UiText
+-        get() = TextCatalog.ui(_state.value.language)
++    private val prefs = app.getSharedPreferences("freefcc", Context.MODE_PRIVATE)
+ 
+     init {
+         // MainActivity.onCreate() calls init() below on every Activity re-creation
+@@ -125,14 +106,28 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+         }
+         // Restore the cached aircraft serial from a previous session so the
+         // user does not have to re-probe before 4G if the drone is the same.
++        // A manually-entered serial takes priority and is shown in the field.
++        val manual = prefs.getString("manual_aircraft_sn", "").orEmpty()
+         val cachedSerial = prefs.getString("aircraft_serial", "").orEmpty()
+-        val language = AppLanguage.fromPref(prefs.getString("language", null))
+-        update { copy(language = language) }
+-        if (cachedSerial.isNotEmpty()) {
+-            update { copy(aircraftSerial = cachedSerial) }
++        val shown = if (manual.isNotEmpty()) manual else cachedSerial
++        update { copy(manualSerial = manual, aircraftSerial = shown) }
++    }
++
++    /**
++     * Stores (or clears) a manually-entered aircraft serial. A manual serial
++     * takes priority over auto-detection everywhere — the reliable fallback
++     * when the controller never surfaces the serial on its own.
++     */
++    fun setManualSerial(serial: String) {
++        val s = serial.trim().uppercase()
++        prefs.edit().putString("manual_aircraft_sn", s).apply()
++        if (s.isEmpty()) {
++            update { copy(manualSerial = "") }
++            log("Manual serial cleared — auto-detection will be used")
++        } else {
++            update { copy(manualSerial = s, aircraftSerial = s) }
++            log(if (DumlTransport.isValidSerial(s)) "Manual serial set: $s" else "Manual serial set: $s (note: unusual format)")
+         }
+-        restoreUpdateDiagnostics()
+-        restorePendingUpdate()
+     }
+ 
+     /** Claims the shared hardware lock for one operation. Returns false if another (including the keepalive service) is already running. */
+@@ -141,12 +136,6 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+     /** Releases the shared hardware lock. Must run in a finally block covering every exit path. */
+     private fun endHardwareOp() = HardwareLock.end()
+ 
+-    fun setLanguage(language: AppLanguage) {
+-        prefs.edit().putString("language", language.prefValue).apply()
+-        update { copy(language = language) }
+-        log(if (language == AppLanguage.TR) "Dil Türkçe olarak ayarlandı" else "Language set to English")
+-    }
+-
+     fun init() {
+         val model = try { Build.DEVICE } catch (_: Exception) { "unknown" }
+         val autoEnabled = prefs.getBoolean("auto_fcc", false)
+@@ -156,19 +145,13 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+         update { copy(controllerModel = model, status = "disconnected", autoFcc = autoEnabled, isKeepaliveRunning = keepaliveRunning) }
+ 
+         if (autoEnabled) {
+-            log(if (_state.value.language == AppLanguage.TR) "Auto-FCC açık — bağlanıyor ve uygulanıyor..." else "Auto-FCC enabled — connecting and applying...")
++            log("Auto-FCC enabled — connecting and applying...")
+             autoConnectAndApply()
+         }
+ 
+         checkForUpdates()
+     }
+ 
+-    /** Refreshes persistent DownloadManager state when returning from Android Settings or installer. */
+-    fun onAppResumed() {
+-        restoreUpdateDiagnostics()
+-        restorePendingUpdate()
+-    }
+-
+     // --- Auto-FCC ---
+ 
+     /**
+@@ -180,13 +163,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+         val newValue = !_state.value.autoFcc
+         prefs.edit().putBoolean("auto_fcc", newValue).apply()
+         update { copy(autoFcc = newValue) }
+-        log(
+-            if (_state.value.language == AppLanguage.TR) {
+-                if (newValue) "Auto-FCC açıldı — sonraki açılışta otomatik bağlanacak" else "Auto-FCC kapatıldı"
+-            } else {
+-                if (newValue) "Auto-FCC enabled — will auto-connect on next launch" else "Auto-FCC disabled"
+-            }
+-        )
++        log(if (newValue) "Auto-FCC enabled — will auto-connect on next launch" else "Auto-FCC disabled")
+     }
+ 
+     /**
+@@ -196,27 +173,26 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+      */
+     private fun autoConnectAndApply() {
+         if (!beginHardwareOp()) {
+-            log(if (_state.value.language == AppLanguage.TR) "Auto-FCC atlandı — başka bir donanım işlemi çalışıyor" else "Auto-FCC skipped — another hardware operation is already running")
++            log("Auto-FCC skipped — another hardware operation is already running")
+             return
+         }
+-        val language = _state.value.language
+         runOnIO {
+             try {
+                 // Wait a moment for the UI to render
+                 delay(1000)
+ 
+                 // Try to connect — scans all known ports
+-                update { copy(status = "connecting", message = if (language == AppLanguage.TR) "Otomatik bağlanıyor..." else "Auto-connecting...") }
++                update { copy(status = "connecting", message = "Auto-connecting...") }
+                 if (!transport.connect()) {
+-                    log(if (language == AppLanguage.TR) "Auto-FCC: kumanda bulunamadı — drone açık mı?" else "Auto-FCC: controller not found — is the drone powered on?")
+-                    update { copy(status = "disconnected", message = if (language == AppLanguage.TR) "Kumanda bulunamadı. Bağlan'a bastığında tekrar deneyebilirsin." else "Controller not found. Auto-FCC will retry when you tap Connect.") }
++                    log("Auto-FCC: controller not found — is the drone powered on?")
++                    update { copy(status = "disconnected", message = "Controller not found. Auto-FCC will retry when you tap Connect.") }
+                     return@runOnIO
+                 }
+ 
+-                log(if (language == AppLanguage.TR) "Auto-FCC: kumanda bağlandı" else "Auto-FCC: controller connected")
++                log("Auto-FCC: controller connected")
+                 val detectedPort = transport.getDetectedPort()
+                 if (detectedPort > 0) {
+-                    log(if (language == AppLanguage.TR) "DUML portu algılandı: $detectedPort" else "DUML port detected: $detectedPort")
++                    log("DUML port detected: $detectedPort")
+                 }
+                 val serial = transport.probeSerial(1500)
+                 if (serial.isNotEmpty()) {
+@@ -227,15 +203,15 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+                         status = "connected",
+                         isConnected = true,
+                         aircraftSerial = serial,
+-                        message = if (language == AppLanguage.TR) "Bağlandı. FCC otomatik uygulanıyor..." else "Connected. Auto-applying FCC..."
++                        message = "Connected. Auto-applying FCC..."
+                     )
+                 }
+-                if (serial.isNotEmpty()) log(if (language == AppLanguage.TR) "Hava aracı seri no: $serial" else "Aircraft serial: $serial")
++                if (serial.isNotEmpty()) log("Aircraft serial: $serial")
+ 
+                 // Apply FCC
+                 delay(500)
+-                update { copy(status = "applying", isBusy = true, busyProgress = 0f, message = if (language == AppLanguage.TR) "FCC modu uygulanıyor..." else "Applying FCC mode...") }
+-                log(if (language == AppLanguage.TR) "Auto-FCC: FCC modu uygulanıyor..." else "Auto-FCC: applying FCC mode...")
++                update { copy(status = "applying", isBusy = true, busyProgress = 0f, message = "Applying FCC mode...") }
++                log("Auto-FCC: applying FCC mode...")
+ 
+                 val profile = Profiles.load(app, "fcc.json")
+                 val success = transport.sendFrames(
+@@ -251,40 +227,40 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+                     update {
+                         copy(
+                             status = "fcc_enabled",
+-                            message = if (language == AppLanguage.TR) "FCC açıldı. Keepalive başlatılıyor..." else "FCC enabled. Starting keepalive...",
++                            message = "FCC enabled. Starting keepalive...",
+                             isFccEnabled = true,
+                             isBusy = false,
+                             busyProgress = 1f,
+                             isConnected = true
+                         )
+                     }
+-                    log(if (language == AppLanguage.TR) "Auto-FCC: FCC modu açıldı" else "Auto-FCC: FCC mode enabled")
++                    log("Auto-FCC: FCC mode enabled")
+ 
+                     // Auto-start keepalive
+                     delay(500)
+                     update { copy(isKeepaliveRunning = true) }
+                     FccKeepaliveService.start(app)
+-                    log(if (language == AppLanguage.TR) "Auto-FCC: Keepalive başladı (2 saniyede bir tekrar uygulanıyor)" else "Auto-FCC: keepalive started (re-applying every 2s)")
++                    log("Auto-FCC: keepalive started (re-applying every 2s)")
+ 
+                     // Auto-launch DJI Fly
+                     delay(500)
+-                    update { copy(message = if (language == AppLanguage.TR) "FCC aktif. DJI Fly açılıyor..." else "FCC active. Launching DJI Fly...") }
+-                    log(if (language == AppLanguage.TR) "Auto-FCC: DJI Fly açılıyor" else "Auto-FCC: launching DJI Fly")
++                    update { copy(message = "FCC active. Launching DJI Fly...") }
++                    log("Auto-FCC: launching DJI Fly")
+                     launchDjiFly()
+                 } else {
+                     update {
+                         copy(
+                             status = "connected",
+-                            message = if (language == AppLanguage.TR) "Auto-FCC başarısız — manuel dene" else "Auto-FCC failed — try manually",
++                            message = "Auto-FCC failed — try manually",
+                             isBusy = false,
+                             busyProgress = 0f
+                         )
+                     }
+-                    log(if (language == AppLanguage.TR) "Auto-FCC: uygulama başarısız — manuel dene" else "Auto-FCC: apply failed — try manually")
++                    log("Auto-FCC: apply failed — try manually")
+                 }
+             } catch (e: Exception) {
+-                log(if (language == AppLanguage.TR) "Auto-FCC hatası: ${e.message}" else "Auto-FCC error: ${e.message}")
+-                update { copy(status = "disconnected", message = if (language == AppLanguage.TR) "Auto-FCC hatası: ${e.message}" else "Auto-FCC error: ${e.message}", isBusy = false, busyProgress = 0f) }
++                log("Auto-FCC error: ${e.message}")
++                update { copy(status = "disconnected", message = "Auto-FCC error: ${e.message}", isBusy = false, busyProgress = 0f) }
+             } finally {
+                 endHardwareOp()
+             }
+@@ -299,20 +275,19 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+      */
+     fun connect() {
+         if (!beginHardwareOp()) {
+-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
++            log("Hardware busy — please wait for the current operation to finish.")
+             return
+         }
+-        val language = _state.value.language
+-        update { copy(status = "connecting", message = if (language == AppLanguage.TR) "Kumandaya bağlanılıyor..." else "Connecting to controller...") }
+-        log(if (language == AppLanguage.TR) "Kumandaya bağlanılıyor..." else "Connecting to controller...")
++        update { copy(status = "connecting", message = "Connecting to controller...") }
++        log("Connecting to controller...")
+ 
+         runOnIO {
+             try {
+                 if (transport.connect()) {
+-                    log(if (language == AppLanguage.TR) "Kumanda bağlandı" else "Controller connected")
++                    log("Controller connected")
+                     val detectedPort = transport.getDetectedPort()
+                     if (detectedPort > 0) {
+-                        log(if (language == AppLanguage.TR) "DUML portu algılandı: $detectedPort" else "DUML port detected: $detectedPort")
++                        log("DUML port detected: $detectedPort")
+                     }
+                     val serial = transport.probeSerial(1500)
+                     if (serial.isNotEmpty()) {
+@@ -321,25 +296,21 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+                     update {
+                         copy(
+                             status = "connected",
+-                            message = if (serial.isNotEmpty()) {
+-                                if (language == AppLanguage.TR) "Bağlandı — $serial" else "Connected — $serial"
+-                            } else {
+-                                if (language == AppLanguage.TR) "Bağlandı. FCC uygulamaya hazır." else "Connected. Ready to apply FCC."
+-                            },
++                            message = if (serial.isNotEmpty()) "Connected — $serial" else "Connected. Ready to apply FCC.",
+                             isConnected = true,
+                             aircraftSerial = serial
+                         )
+                     }
+-                    if (serial.isNotEmpty()) log(if (language == AppLanguage.TR) "Hava aracı seri no: $serial" else "Aircraft serial: $serial")
++                    if (serial.isNotEmpty()) log("Aircraft serial: $serial")
+                 } else {
+                     update {
+                         copy(
+                             status = "disconnected",
+-                            message = if (language == AppLanguage.TR) "Kumanda bulunamadı. Drone açık ve bağlı olmalı." else "Controller not found. Make sure the drone is powered on and linked.",
++                            message = "Controller not found. Make sure the drone is powered on and linked.",
+                             isConnected = false
+                         )
+                     }
+-                    log(if (language == AppLanguage.TR) "Bağlantı başarısız — drone açık mı?" else "Connection failed — is the drone powered on?")
++                    log("Connection failed — is the drone powered on?")
+                 }
+             } finally {
+                 endHardwareOp()
+@@ -355,17 +326,16 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+      */
+     fun enableFcc() {
+         if (!beginHardwareOp()) {
+-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
++            log("Hardware busy — please wait for the current operation to finish.")
+             return
+         }
+-        val language = _state.value.language
+-        update { copy(status = "applying", isBusy = true, busyProgress = 0f, message = if (language == AppLanguage.TR) "FCC modu açılıyor..." else "Enabling FCC mode...") }
+-        log(if (language == AppLanguage.TR) "FCC modu açılıyor..." else "Enabling FCC mode...")
++        update { copy(status = "applying", isBusy = true, busyProgress = 0f, message = "Enabling FCC mode...") }
++        log("Enabling FCC mode...")
+ 
+         runOnIO {
+             try {
+                 val profile = Profiles.load(app, "fcc.json")
+-                log(if (language == AppLanguage.TR) "FCC profili yüklendi: ${profile.frames.size} frame, ${profile.rounds} tur" else "Loaded FCC profile: ${profile.frames.size} frames, ${profile.rounds} rounds")
++                log("Loaded FCC profile: ${profile.frames.size} frames, ${profile.rounds} rounds")
+ 
+                 val success = transport.sendFrames(
+                     frames = profile.frames,
+@@ -380,28 +350,28 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+                     update {
+                         copy(
+                             status = "fcc_enabled",
+-                            message = if (language == AppLanguage.TR) "FCC modu açıldı" else "FCC mode enabled",
++                            message = "FCC mode enabled",
+                             isFccEnabled = true,
+                             isBusy = false,
+                             busyProgress = 1f,
+                             isConnected = true
+                         )
+                     }
+-                    log(if (language == AppLanguage.TR) "FCC modu açıldı — ${profile.frames.size} frame gönderildi" else "FCC mode enabled — ${profile.frames.size} frames sent")
++                    log("FCC mode enabled — ${profile.frames.size} frames sent")
+                 } else {
+                     update {
+                         copy(
+                             status = "connected",
+-                            message = if (language == AppLanguage.TR) "FCC uygulanamadı — RC bağlantısı yok. Drone açık ve bağlı olmalı." else "FCC apply failed — RC link unreachable. Make sure the drone is on and linked.",
++                            message = "FCC apply failed — RC link unreachable. Make sure the drone is on and linked.",
+                             isBusy = false,
+                             busyProgress = 0f
+                         )
+                     }
+-                    log(if (language == AppLanguage.TR) "FCC uygulama başarısız — yazma işlemleri başarısız" else "FCC apply failed — writes failed")
++                    log("FCC apply failed — writes failed")
+                 }
+             } catch (e: Exception) {
+-                log(if (language == AppLanguage.TR) "FCC uygulama hatası: ${e.message}" else "FCC apply error: ${e.message}")
+-                update { copy(status = "connected", message = if (language == AppLanguage.TR) "FCC uygulama hatası: ${e.message}" else "FCC apply error: ${e.message}", isBusy = false, busyProgress = 0f) }
++                log("FCC apply error: ${e.message}")
++                update { copy(status = "connected", message = "FCC apply error: ${e.message}", isBusy = false, busyProgress = 0f) }
+             } finally {
+                 endHardwareOp()
+             }
+@@ -411,17 +381,16 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+     /** Sends the CE restore command: a single frame that resets to factory region. */
+     fun disableFcc() {
+         if (!beginHardwareOp()) {
+-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
++            log("Hardware busy — please wait for the current operation to finish.")
+             return
+         }
+-        val language = _state.value.language
+         // Stop keepalive first — otherwise it re-applies FCC 2 seconds after
+         // we restore CE, undoing the user's intent.
+         if (_state.value.isKeepaliveRunning) {
+             stopKeepalive()
+         }
+-        update { copy(status = "restoring", isBusy = true, busyProgress = 0f, message = if (language == AppLanguage.TR) "CE modu geri yükleniyor..." else "Restoring CE mode...") }
+-        log(if (language == AppLanguage.TR) "CE modu geri yükleniyor..." else "Restoring CE mode...")
++        update { copy(status = "restoring", isBusy = true, busyProgress = 0f, message = "Restoring CE mode...") }
++        log("Restoring CE mode...")
+ 
+         runOnIO {
+             try {
+@@ -433,15 +402,15 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+                 )
+ 
+                 if (success) {
+-                    update { copy(status = "connected", message = if (language == AppLanguage.TR) "CE modu geri yüklendi" else "CE mode restored", isFccEnabled = false, isBusy = false) }
+-                    log(if (language == AppLanguage.TR) "CE modu geri yüklendi" else "CE mode restored")
++                    update { copy(status = "connected", message = "CE mode restored", isFccEnabled = false, isBusy = false) }
++                    log("CE mode restored")
+                 } else {
+-                    update { copy(status = "connected", message = if (language == AppLanguage.TR) "CE geri yüklenemedi — RC bağlantısı yok" else "CE restore failed — RC link unreachable", isBusy = false) }
+-                    log(if (language == AppLanguage.TR) "CE geri yükleme başarısız" else "CE restore failed")
++                    update { copy(status = "connected", message = "CE restore failed — RC link unreachable", isBusy = false) }
++                    log("CE restore failed")
+                 }
+             } catch (e: Exception) {
+-                log(if (language == AppLanguage.TR) "CE geri yükleme hatası: ${e.message}" else "CE restore error: ${e.message}")
+-                update { copy(status = "connected", message = if (language == AppLanguage.TR) "CE geri yükleme hatası: ${e.message}" else "CE restore error: ${e.message}", isBusy = false) }
++                log("CE restore error: ${e.message}")
++                update { copy(status = "connected", message = "CE restore error: ${e.message}", isBusy = false) }
+             } finally {
+                 endHardwareOp()
+             }
+@@ -458,19 +427,19 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+      */
+     fun startKeepalive() {
+         if (_state.value.isKeepaliveRunning) {
+-            log(if (_state.value.language == AppLanguage.TR) "Keepalive zaten çalışıyor" else "Keepalive already running")
++            log("Keepalive already running")
+             return
+         }
+         update { copy(isKeepaliveRunning = true) }
+         FccKeepaliveService.start(app)
+-        log(if (_state.value.language == AppLanguage.TR) "FCC Keepalive başlatıldı — CE resetini önlemek için 2 saniyede bir uygulanıyor" else "Started FCC keepalive — re-applying every 2s to prevent CE reset")
++        log("Started FCC keepalive — re-applying every 2s to prevent CE reset")
+     }
+ 
+     /** Stops the keepalive foreground service. */
+     fun stopKeepalive() {
+         FccKeepaliveService.stop(app)
+         update { copy(isKeepaliveRunning = false) }
+-        log(if (_state.value.language == AppLanguage.TR) "FCC Keepalive durduruldu" else "FCC keepalive stopped")
++        log("FCC keepalive stopped")
+     }
+ 
+     // --- Launch DJI Fly ---
+@@ -488,7 +457,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+             try {
+                 app.startActivity(intent)
+-                log(if (_state.value.language == AppLanguage.TR) "DJI Fly açıldı" else "Launched DJI Fly")
++                log("Launched DJI Fly")
+                 return
+             } catch (_: Exception) {}
+         }
+@@ -506,7 +475,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+             }
+             try {
+                 app.startActivity(explicitIntent)
+-                log(if (_state.value.language == AppLanguage.TR) "DJI Fly açıldı" else "Launched DJI Fly")
++                log("Launched DJI Fly")
+                 return
+             } catch (_: Exception) {}
+         }
+@@ -517,12 +486,12 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+             intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+             try {
+                 app.startActivity(intent)
+-                log(if (_state.value.language == AppLanguage.TR) "DJI Go 4 açıldı" else "Launched DJI Go 4")
++                log("Launched DJI Go 4")
+                 return
+             } catch (_: Exception) {}
+         }
+ 
+-        log(if (_state.value.language == AppLanguage.TR) "DJI Fly kurulu değil veya bu kumandada açılamıyor" else "DJI Fly not installed or cannot launch on this controller")
++        log("DJI Fly not installed or cannot launch on this controller")
+     }
+ 
+     // --- 4G ---
+@@ -536,61 +505,61 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+      * written — never confirm the aircraft actually activated 4G. There is
+      * no "off" action: no send-only command exists to reliably deactivate it.
+      *
+-     * Guards (added to stop the most common failure modes early):
+-     * 1. Aircraft serial must be non-empty AND at least 6 chars. A 6-char
+-     *    W[AM]xxx model code (WA341, WM630) is the minimum the 4G payload
+-     *    format needs — a shorter string would produce a malformed payload.
+-     * 2. Model code must be in the 4G-capable set. The Mini series rejects
+-     *    4G at the firmware level; we tell the user up front rather than
+-     *    fail after writing 128 frames.
+-     * 3. The 4G dongle must be present (the abstract socket must be
+-     *    connectable). If `/duss/mb/0x205` does not exist, the cellular
+-     *    module is not attached and no frame can succeed.
++     * Guards (fail fast on the common failure modes, but do not over-block):
++     * 1. Aircraft serial must be present — it is embedded in every 4G payload.
++     *    We do not reject on a specific length: the probe may return either the
++     *    full 1581… factory serial or a short W[AM]xxx model code, and both are
++     *    valid inputs to the profile builder.
++     * 2. The 4G dongle must be present — this is the AUTHORITATIVE gate. If the
++     *    abstract socket `/duss/mb/0x205` is not connectable, no cellular module
++     *    is attached and no frame can succeed, so we stop before writing 128.
++     * 3. Model code is only an advisory note. A full 1581… serial carries no
++     *    model code to check, and the code list is not reliable enough to block
++     *    on (DJI ships the Cellular Dongle 2 for the Mini 4 Pro too). If the
++     *    dongle is attached, we proceed regardless of model.
+      */
+     fun send4gActivationFrames() {
+         if (!beginHardwareOp()) {
+-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
++            log("Hardware busy — please wait for the current operation to finish.")
+             return
+         }
+-        val language = _state.value.language
+         update { copy(is4gBusy = true, busyProgress = 0f, fourGMessage = "") }
+-        log(if (language == AppLanguage.TR) "4G aktivasyon frameleri gönderiliyor..." else "Sending 4G activation frames...")
++        log("Sending 4G activation frames...")
+ 
+         runOnIO {
+             try {
+                 val serial = getOrProbeSerial()
+ 
+-                // Guard 1: serial present and long enough for the 4G payload format.
+-                if (serial.length < 6) {
++                // Guard 1: we need *some* serial to embed in the payload.
++                if (serial.isEmpty()) {
+                     update {
+-                        copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "4G için hava aracı bağlı olmalı. Drone'u aç, link kur ve önce Bağlan'a bas." else "4G needs the aircraft connected. Power on the drone, link it, and tap Connect first.")
++                        copy(is4gBusy = false, fourGMessage = "4G needs the aircraft connected. Power on the drone, link it, and tap Connect first.")
+                     }
+-                    log(if (language == AppLanguage.TR) "4G aktivasyon başarısız — seri çok kısa ('$serial'); en az W[AM]xxx model kodu gerekli" else "4G activation failed — aircraft serial too short ('$serial'); need at least a W[AM]xxx model code")
++                    log("4G activation failed — no aircraft serial detected; power on the drone and tap Connect first")
+                     return@runOnIO
+                 }
+ 
+-                // Guard 2: model must be in the 4G-capable set.
+-                // The model code is the W[AM]xxx prefix (first 5-6 chars).
+-                val modelCode = serial.take(5).lowercase()
+-                if (modelCode !in MODELS_WITH_4G) {
+-                    update {
+-                        copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "$modelCode modelinde 4G desteklenmiyor. DJI Cellular Dongle 2 gerekir; bu destek Mavic 4 Pro / Matrice / Inspire 3 tarafındadır." else "4G is not supported on $modelCode. It requires a DJI Cellular Dongle 2, which is only available on Mavic 4 Pro / Matrice / Inspire 3.")
+-                    }
+-                    log(if (language == AppLanguage.TR) "4G aktivasyon iptal — $modelCode 4G destekli listede değil $MODELS_WITH_4G" else "4G activation aborted — model $modelCode is not in the 4G-capable set $MODELS_WITH_4G")
+-                    return@runOnIO
++                // Advisory only: pull a W[AM]xxx model code from anywhere in the
++                // serial (a full 1581… serial won't contain one). Never blocks —
++                // the dongle probe below is the real gate.
++                val modelHint = Regex("[wW][aAmM][0-9]{3}").find(serial)?.value?.lowercase()
++                if (modelHint != null && modelHint !in MODELS_WITH_4G) {
++                    log("Note: model '$modelHint' isn't in the known-4G list, but a dongle check follows — trying anyway. If 4G doesn't activate, this aircraft may not accept the Cellular Dongle 2.")
+                 }
+ 
+-                // Guard 3: dongle pre-check — fast-fail if the socket does not exist.
++                // Guard 2 (authoritative): dongle pre-check. If the socket isn't
++                // connectable, no cellular module is attached — stop before
++                // writing 128 frames that cannot succeed.
+                 if (!transport.is4gDonglePresent()) {
+                     update {
+-                        copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "4G dongle algılanmadı. DJI Cellular Dongle 2'yi hava aracına bağlayıp tekrar dene." else "4G dongle not detected. Connect a DJI Cellular Dongle 2 to the aircraft and try again.")
++                        copy(is4gBusy = false, fourGMessage = "4G dongle not detected. Connect a DJI Cellular Dongle 2 to the aircraft (Mini 4 Pro also needs its 4G mounting kit) and try again.")
+                     }
+-                    log(if (language == AppLanguage.TR) "4G aktivasyon iptal — /duss/mb/0x205 soketine bağlanılamıyor (dongle yok?)" else "4G activation aborted — 4G socket /duss/mb/0x205 not connectable (no dongle?)")
++                    log("4G activation aborted — 4G socket /duss/mb/0x205 not connectable (no dongle?)")
+                     return@runOnIO
+                 }
+ 
+                 val profile = Profiles.load4g(app, serial)
+-                log(if (language == AppLanguage.TR) "4G profili yüklendi: ${profile.frames.size} frame (seri: $serial, model: $modelCode)" else "Loaded 4G profile: ${profile.frames.size} frames (serial: $serial, model: $modelCode)")
++                log("Loaded 4G profile: ${profile.frames.size} frames (serial: $serial, model: ${modelHint ?: "unknown"})")
+ 
+                 // 4G uses Unix domain socket, not TCP
+                 val success = transport.sendFramesUnix(
+@@ -603,17 +572,17 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+                         copy(
+                             is4gBusy = false,
+                             busyProgress = 0f,
+-                            fourGMessage = if (language == AppLanguage.TR) "Tüm aktivasyon frameleri yazıldı — 4G durumunu hava aracında kontrol et." else "All activation frames written successfully — check 4G status on the aircraft."
++                            fourGMessage = "All activation frames written successfully — check 4G status on the aircraft."
+                         )
+                     }
+-                    log(if (language == AppLanguage.TR) "4G aktivasyon: ${profile.frames.size} frame Unix soketine yazıldı" else "4G activation: all ${profile.frames.size} frames written successfully via Unix socket")
++                    log("4G activation: all ${profile.frames.size} frames written successfully via Unix socket")
+                 } else {
+-                    update { copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "4G uygulanamadı — 4G dongle bağlı mı?" else "4G apply failed — is the 4G dongle connected?") }
+-                    log(if (language == AppLanguage.TR) "4G aktivasyon başarısız — Unix soketinde en az bir frame yazılamadı" else "4G activation failed — at least one frame write failed on the Unix socket")
++                    update { copy(is4gBusy = false, fourGMessage = "4G apply failed — is the 4G dongle connected?") }
++                    log("4G activation failed — at least one frame write failed on the Unix socket")
+                 }
+             } catch (e: Exception) {
+-                log(if (language == AppLanguage.TR) "4G aktivasyon hatası: ${e.message}" else "4G activation error: ${e.message}")
+-                update { copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "4G hatası: ${e.message}" else "4G error: ${e.message}") }
++                log("4G activation error: ${e.message}")
++                update { copy(is4gBusy = false, fourGMessage = "4G error: ${e.message}") }
+             } finally {
+                 endHardwareOp()
+             }
+@@ -644,18 +613,17 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+      */
+     fun setLed(on: Boolean) {
+         if (_state.value.isLedBusy) {
+-            log(if (_state.value.language == AppLanguage.TR) "LED meşgul — lütfen bekle." else "LED busy — please wait.")
++            log("LED busy — please wait.")
+             return
+         }
+-        val language = _state.value.language
+-        update { copy(isLedBusy = true, ledStatus = if (language == AppLanguage.TR) { if (on) "LED'ler açılıyor..." else "LED'ler kapatılıyor..." } else { if (on) "Turning LEDs on..." else "Turning LEDs off..." }) }
+-        log(if (language == AppLanguage.TR) { if (on) "LED'ler açılıyor..." else "LED'ler kapatılıyor..." } else { if (on) "Turning LEDs on..." else "Turning LEDs off..." })
++        update { copy(isLedBusy = true, ledStatus = if (on) "Turning LEDs on..." else "Turning LEDs off...") }
++        log(if (on) "Turning LEDs on..." else "Turning LEDs off...")
+ 
+         runOnIO {
+             try {
+                 val fileName = if (on) "led_on.json" else "led_off.json"
+                 val profile = Profiles.load(app, fileName)
+-                log(if (language == AppLanguage.TR) "LED profili yüklendi: ${profile.frames.size} frame (port ${profile.port})" else "Loaded LED profile: ${profile.frames.size} frames (port ${profile.port})")
++                log("Loaded LED profile: ${profile.frames.size} frames (port ${profile.port})")
+ 
+                 // Separate transport instance — the LED command on port 40007
+                 // must not share state with the FCC transport on port 40009.
+@@ -683,14 +651,14 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+ 
+                 if (anySuccess) {
+                     update { copy(isLedBusy = false, ledStatus = if (on) "ON" else "OFF") }
+-                    log(if (language == AppLanguage.TR) { if (on) "LED'ler açıldı" else "LED'ler kapatıldı" } else { if (on) "LEDs turned on" else "LEDs turned off" })
++                    log(if (on) "LEDs turned on" else "LEDs turned off")
+                 } else {
+-                    update { copy(isLedBusy = false, ledStatus = if (language == AppLanguage.TR) "Başarısız — DJI Fly çalışıyor mu?" else "Failed — is DJI Fly running?") }
+-                    log(if (language == AppLanguage.TR) "LED komutu başarısız — DJI Fly açık ve hava aracı bağlı olmalı" else "LED command failed — make sure DJI Fly is running with aircraft connected")
++                    update { copy(isLedBusy = false, ledStatus = "Failed — is DJI Fly running?") }
++                    log("LED command failed — make sure DJI Fly is running with aircraft connected")
+                 }
+             } catch (e: Exception) {
+-                log(if (language == AppLanguage.TR) "LED hatası: ${e.message}" else "LED error: ${e.message}")
+-                update { copy(isLedBusy = false, ledStatus = if (language == AppLanguage.TR) "Hata: ${e.message}" else "Error: ${e.message}") }
++                log("LED error: ${e.message}")
++                update { copy(isLedBusy = false, ledStatus = "Error: ${e.message}") }
+             }
+         }
+     }
+@@ -705,20 +673,19 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+     fun queryDeviceInfo() {
+         if (!isControllerReachable()) return
+         if (!beginHardwareOp()) {
+-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
++            log("Hardware busy — please wait for the current operation to finish.")
+             return
+         }
+ 
+-        val language = _state.value.language
+         update { copy(isQueryingInfo = true) }
+-        log(if (language == AppLanguage.TR) "Cihaz bilgisi sorgulanıyor..." else "Querying device info...")
++        log("Querying device info...")
+ 
+         runOnIO {
+             try {
+                 val profile = Profiles.load(app, "device_info.json")
+                 if (profile.frames.isEmpty()) {
+-                    update { copy(isQueryingInfo = false, deviceInfo = if (language == AppLanguage.TR) "device_info.json boş" else "device_info.json is empty") }
+-                    log(if (language == AppLanguage.TR) "Cihaz bilgisi: profilde frame yok" else "Device info: profile has no frames")
++                    update { copy(isQueryingInfo = false, deviceInfo = "device_info.json is empty") }
++                    log("Device info: profile has no frames")
+                     return@runOnIO
+                 }
+                 val frame = profile.frames.first()
+@@ -726,17 +693,17 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+                 val response = transport.sendAndReceive(frame, profile.readWindowMs)
+ 
+                 if (response == null || response.isEmpty()) {
+-                    update { copy(isQueryingInfo = false, deviceInfo = if (language == AppLanguage.TR) "Kumandadan yanıt yok" else "No response from controller") }
+-                    log(if (language == AppLanguage.TR) "Cihaz bilgisi: yanıt yok" else "Device info: no response")
++                    update { copy(isQueryingInfo = false, deviceInfo = "No response from controller") }
++                    log("Device info: no response")
+                     return@runOnIO
+                 }
+ 
+                 val info = formatVersionResponse(response)
+                 update { copy(isQueryingInfo = false, deviceInfo = info) }
+-                log(if (language == AppLanguage.TR) "Cihaz bilgisi alındı: ${response.size} bayt" else "Device info received: ${response.size} bytes")
++                log("Device info received: ${response.size} bytes")
+             } catch (e: Exception) {
+-                log(if (language == AppLanguage.TR) "Cihaz bilgisi hatası: ${e.message}" else "Device info error: ${e.message}")
+-                update { copy(isQueryingInfo = false, deviceInfo = if (language == AppLanguage.TR) "Hata: ${e.message}" else "Error: ${e.message}") }
++                log("Device info error: ${e.message}")
++                update { copy(isQueryingInfo = false, deviceInfo = "Error: ${e.message}") }
+             } finally {
+                 endHardwareOp()
+             }
+@@ -745,22 +712,29 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+ 
+     fun probeSerial() {
+         if (!beginHardwareOp()) {
+-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
++            log("Hardware busy — please wait for the current operation to finish.")
+             return
+         }
+-        val language = _state.value.language
+-        log(if (language == AppLanguage.TR) "Hava aracı seri numarası aranıyor..." else "Probing for aircraft serial...")
++        log("Reading aircraft serial...")
++        update { copy(isProbingSerial = true) }
+         runOnIO {
+             try {
+-                val serial = transport.probeSerial(2000)
++                // Active query first (fast, deterministic when the aircraft is
++                // linked), then a longer passive telemetry listen as a fallback.
++                var serial = transport.probeSerialActive(800)
++                if (serial.isEmpty()) {
++                    log("No reply to the serial query — listening for telemetry (up to 8s)...")
++                    serial = transport.probeSerial(8000)
++                }
+                 if (serial.isNotEmpty()) {
+                     update { copy(aircraftSerial = serial) }
+                     prefs.edit().putString("aircraft_serial", serial).apply()
+-                    log(if (language == AppLanguage.TR) "Hava aracı seri no: $serial (önbelleğe alındı)" else "Aircraft serial: $serial (cached)")
++                    log("Aircraft serial: $serial (cached)")
+                 } else {
+-                    log(if (language == AppLanguage.TR) "Seri numarası algılanmadı — hava aracı açık mı?" else "No serial detected — is the aircraft powered on?")
++                    log("No serial detected — power on and link the aircraft with the live view up, or enter it manually.")
+                 }
+             } finally {
++                update { copy(isProbingSerial = false) }
+                 endHardwareOp()
+             }
+         }
+@@ -778,16 +752,15 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+         if (!force && now - lastCheck < 60 * 60 * 1000 && _state.value.updateChecked && _state.value.updateInfo != null) {
+             return
+         }
+-        update { copy(isCheckingUpdate = true, profileUpdateMessage = "") }
+-        val language = _state.value.language
+-        log(if (language == AppLanguage.TR) "DronePeak-FCC güncellemesi kontrol ediliyor..." else "Checking DronePeak-FCC updates...")
++        update { copy(isCheckingUpdate = true) }
++        log("Checking for updates...")
+ 
+         runOnIO {
+             val info = UpdateChecker.fetchLatest()
+             if (info == null) {
+                 // Don't save lastCheck on failure — let the user retry immediately.
+                 update { copy(isCheckingUpdate = false, updateChecked = true) }
+-                log(if (language == AppLanguage.TR) "Güncelleme kontrolü başarısız — internet yok veya GitHub erişilemiyor. Tekrar deneyebilirsin." else "Update check failed — no internet or GitHub unreachable. Tap Retry to try again.")
++                log("Update check failed — no internet or GitHub unreachable. Tap Retry to try again.")
+                 return@runOnIO
+             }
+ 
+@@ -804,418 +777,173 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+                 )
+             }
+             if (isNewer) {
+-                log(if (language == AppLanguage.TR) "DronePeak-FCC güncellemesi var: v${info.version}" else "DronePeak-FCC update available: v${info.version}")
++                log("Update available: v${info.version}")
+             } else {
+-                log(if (language == AppLanguage.TR) "DronePeak-FCC güncel (v$APP_VERSION)" else "DronePeak-FCC is up to date (v$APP_VERSION)")
++                log("App is up to date (v$APP_VERSION)")
+             }
+         }
+     }
+ 
+-    fun downloadUpdate() {
+-        val info = _state.value.updateInfo ?: run {
+-            log(if (_state.value.language == AppLanguage.TR) "Önce DronePeak-FCC güncelleme kontrolü yap." else "Check DronePeak-FCC updates first.")
+-            return
+-        }
+-        if (_state.value.updateStage == UpdateStage.DOWNLOADING) return
+-        if (info.downloadUrl.isBlank()) {
+-            update {
+-                copy(
+-                    profileUpdateMessage = if (_state.value.language == AppLanguage.TR) {
+-                        "Bu sürüm için indirilebilir APK bulunamadı."
+-                    } else {
+-                        "No downloadable APK was found for this version."
+-                    }
+-                )
++    private var downloadedApk: java.io.File? = null
++
++    /**
++     * Checks if the app can install packages. If not, opens the system
++     * Settings page for "Install unknown apps" so the user can grant it.
++     * Returns true if permission is already granted (proceed with download),
++     * false if we opened Settings (user needs to grant, then tap Download again).
++     */
++    fun ensureInstallPermission(): Boolean {
++        val pm = app.packageManager
++        if (android.os.Build.VERSION.SDK_INT >= 26 && !pm.canRequestPackageInstalls()) {
++            log("Install permission needed — opening Settings. Grant 'Install unknown apps' for FreeFCC, then tap Download again.")
++            val settingsIntent = android.content.Intent(
++                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES
++            ).apply {
++                data = android.net.Uri.parse("package:${app.packageName}")
++                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+             }
+-            log(if (_state.value.language == AppLanguage.TR) "Güncelleme APK'sı bulunamadı." else "Update APK missing.")
+-            return
+-        }
+-        val language = _state.value.language
+-        clearPendingUpdate(removeDownload = true)
+-        UpdateDiagnostics.clearResult(app)
+-        val download = UpdateChecker.startApkDownload(app, info)
+-        if (download == null) {
+-            UpdateDiagnostics.setResult(app, updateMessage("download_failed", language), true)
+-            UpdateDiagnostics.record(app, "DOWNLOAD_START_FAILED version=${info.version}")
+-            update {
+-                copy(
+-                    isDownloadingUpdate = false,
+-                    isUpdateDownloaded = false,
+-                    updateStage = UpdateStage.FAILED,
+-                    profileUpdateMessage = updateMessage("download_failed", language)
+-                )
++            try {
++                app.startActivity(settingsIntent)
++            } catch (_: Exception) {
++                log("Settings page not available — you may need to install updates via SD card + FileManager.")
+             }
+-            log(if (language == AppLanguage.TR) "Güncelleme indirme başlatılamadı" else "Could not start update download")
+-            return
++            return false
+         }
+-        persistPendingUpdate(download.first, download.second, info)
+-        UpdateDiagnostics.record(app, "DOWNLOAD_STARTED id=${download.first} version=${info.version} file=${download.second.name}")
+-        update {
+-            copy(
+-                isDownloadingUpdate = true,
+-                updateDownloadProgress = 0f,
+-                isUpdateDownloaded = false,
+-                updateStage = UpdateStage.DOWNLOADING,
+-                updateDiagnosticSummary = "",
+-                updateDiagnosticDetails = "",
+-                updateDiagnosticFailure = false,
+-                profileUpdateMessage = if (language == AppLanguage.TR) "Güncelleme indiriliyor..." else "Downloading update..."
+-            )
+-        }
+-        log(if (language == AppLanguage.TR) "Sistem güncelleme indirmesi başlatıldı: ${download.first}" else "System update download started: ${download.first}")
+-        monitorPendingDownload()
++        return true
+     }
+ 
+-    fun downloadProfileUpdate() {
+-        val info = _state.value.updateInfo ?: run {
+-            log(if (_state.value.language == AppLanguage.TR) "Önce güncelleme kontrolü yap." else "Check updates first.")
+-            return
+-        }
++    fun downloadUpdate() {
++        val info = _state.value.updateInfo ?: return
+         if (_state.value.isDownloadingUpdate) return
+-        val language = _state.value.language
+-        update {
+-            copy(
+-                isDownloadingUpdate = true,
+-                updateDownloadProgress = 0f,
+-                profileUpdateMessage = if (language == AppLanguage.TR) "Profil dosyaları indiriliyor..." else "Downloading profile files..."
+-            )
++        // Check install permission BEFORE downloading so the user can grant
++        // it first, then come back and tap Download again.
++        if (!ensureInstallPermission()) {
++            return
+         }
+-        log(if (language == AppLanguage.TR) "Profil dosyaları indiriliyor..." else "Downloading profile files...")
++        update { copy(isDownloadingUpdate = true, updateDownloadProgress = 0f, isUpdateDownloaded = false) }
++        log("Downloading update v${info.version}...")
+ 
+         runOnIO {
+-            val result = UpdateChecker.downloadProfiles(app, info) { progress ->
++            val file = UpdateChecker.downloadApk(app, info) { progress ->
+                 update { copy(updateDownloadProgress = progress) }
+             }
+-            update {
+-                copy(
+-                    isDownloadingUpdate = false,
+-                    updateDownloadProgress = if (result.success) 1f else 0f,
+-                    profileUpdateMessage = if (result.success) {
+-                        if (language == AppLanguage.TR) {
+-                            "Profil dosyaları güncellendi (${result.updatedCount} dosya)."
+-                        } else {
+-                            "Profile files updated (${result.updatedCount} files)."
+-                        }
+-                    } else {
+-                        if (language == AppLanguage.TR) {
+-                            "Profil güncellemesi başarısız: ${result.message}. Bundled profiller kullanılmaya devam edecek."
+-                        } else {
+-                            "Profile update failed: ${result.message}. Bundled profiles remain active."
+-                        }
+-                    }
+-                )
++
++            if (file == null) {
++                update { copy(isDownloadingUpdate = false, updateDownloadProgress = 0f) }
++                log("Update download failed — check your Wi-Fi connection. The RC2 needs Wi-Fi to download updates.")
++                return@runOnIO
+             }
+-            log(
+-                if (result.success) {
+-                    if (language == AppLanguage.TR) "Profil dosyaları güncellendi: ${result.updatedCount} dosya" else "Profile files updated: ${result.updatedCount} files"
+-                } else {
+-                    if (language == AppLanguage.TR) "Profil güncellemesi başarısız: ${result.message}" else "Profile update failed: ${result.message}"
+-                }
+-            )
++
++            downloadedApk = file
++            update { copy(isDownloadingUpdate = false, updateDownloadProgress = 1f, isUpdateDownloaded = true) }
++            log("Update downloaded — tap Install to apply")
+         }
+     }
+ 
+     /** Re-downloads the update after a failed install. Resets the downloaded state first. */
+     fun reDownloadUpdate() {
+-        if (_state.value.updateStage == UpdateStage.DOWNLOADING) return
+-        clearPendingUpdate(removeDownload = true)
+-        update { copy(isUpdateDownloaded = false, updateStage = UpdateStage.NONE) }
++        if (_state.value.isDownloadingUpdate) return
++        downloadedApk = null
++        update { copy(isUpdateDownloaded = false) }
+         downloadUpdate()
+     }
+ 
+-    fun cancelUpdateDownload() {
+-        if (_state.value.updateStage != UpdateStage.DOWNLOADING) return
+-        val language = _state.value.language
+-        clearPendingUpdate(removeDownload = true)
+-        UpdateDiagnostics.setResult(app, updateMessage("download_cancelled", language), false)
+-        UpdateDiagnostics.record(app, "DOWNLOAD_CANCELLED")
+-        update {
+-            copy(
+-                isDownloadingUpdate = false,
+-                updateDownloadProgress = 0f,
+-                isUpdateDownloaded = false,
+-                updateStage = UpdateStage.NONE,
+-                profileUpdateMessage = updateMessage("download_cancelled", language)
+-            )
+-        }
+-        log(if (language == AppLanguage.TR) "Güncelleme indirmesi iptal edildi" else "Update download cancelled")
+-    }
+-
+     fun installUpdate() {
+-        val language = _state.value.language
+-        if (_state.value.updateStage == UpdateStage.VERIFYING || _state.value.updateStage == UpdateStage.PREPARING_INSTALL) return
+-        val apk = pendingApkFile() ?: run {
+-            update {
+-                copy(
+-                    isUpdateDownloaded = false,
+-                    updateStage = UpdateStage.FAILED,
+-                    profileUpdateMessage = updateMessage("apk_missing", language)
+-                )
+-            }
+-            log(if (language == AppLanguage.TR) "Kurulacak güncelleme dosyası bulunamadı" else "No downloaded update file found")
++        val file = downloadedApk ?: run {
++            log("No downloaded APK found — download first")
+             return
+         }
+-        update {
+-            copy(
+-                updateStage = UpdateStage.VERIFYING,
+-                profileUpdateMessage = TextCatalog.ui(language).preparingInstallation
+-            )
++        if (!file.exists()) {
++            log("Downloaded APK file missing — download again")
++            downloadedApk = null
++            update { copy(isUpdateDownloaded = false) }
++            return
+         }
+-        UpdateDiagnostics.record(app, "INSTALL_REQUESTED version=${prefs.getString(updateVersionKey, "")}")
++        update { copy(isBusy = true, message = "Preparing install...") }
+         runOnIO {
+-            val verificationError = runCatching { verifyDownloadedApk(apk) }.getOrElse {
+-                UpdateDiagnostics.record(app, "VERIFY_EXCEPTION ${it.javaClass.simpleName}: ${it.message}")
+-                "verification_failed"
+-            }
+-            if (verificationError != null) {
+-                UpdateDiagnostics.setResult(app, updateMessage(verificationError, language), true)
+-                update {
+-                    copy(
+-                        isUpdateDownloaded = false,
+-                        updateStage = UpdateStage.FAILED,
+-                        profileUpdateMessage = updateMessage(verificationError, language)
+-                    )
+-                }
+-                log("Update APK verification failed: $verificationError")
+-                return@runOnIO
+-            }
+-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !app.packageManager.canRequestPackageInstalls()) {
+-                update {
+-                    copy(
+-                        updateStage = UpdateStage.NEEDS_INSTALL_PERMISSION,
+-                        profileUpdateMessage = updateMessage("install_permission", language)
+-                    )
+-                }
+-                UpdateDiagnostics.setResult(app, updateMessage("install_permission", language), false)
+-                openInstallPermissionSettings(language)
+-                return@runOnIO
+-            }
+-            update {
+-                copy(
+-                    updateStage = UpdateStage.PREPARING_INSTALL,
+-                    profileUpdateMessage = TextCatalog.ui(language).preparingInstallation
+-                )
+-            }
+-            val version = prefs.getString(updateVersionKey, "").orEmpty()
+-            when (UpdateInstallCoordinator(app).start(apk, version)) {
+-                InstallStartResult.STARTED -> update {
+-                    copy(
+-                        updateStage = UpdateStage.WAITING_FOR_ANDROID,
+-                        profileUpdateMessage = TextCatalog.ui(language).waitingForAndroidApproval
+-                    )
++            try {
++                val pm = app.packageManager
++
++                // Check 1: does this app have permission to install packages?
++                // On Android 8+ the user must grant "Install unknown apps"
++                // per-app. The RC2 may hide this Settings page — if so, the
++                // user needs to install via SD card + FileManager instead.
++                if (android.os.Build.VERSION.SDK_INT >= 26 && !pm.canRequestPackageInstalls()) {
++                    log("Install blocked — FreeFCC needs 'Install unknown apps' permission.")
++                    log("Opening Settings to grant it. If the Settings page doesn't appear,")
++                    log("install the update via SD card + FileManager instead.")
++                    val settingsIntent = android.content.Intent(
++                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES
++                    ).apply {
++                        data = android.net.Uri.parse("package:${app.packageName}")
++                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
++                    }
++                    try {
++                        app.startActivity(settingsIntent)
++                    } catch (_: Exception) {
++                        log("Settings page unavailable — install via SD card + FileManager.")
++                    }
++                    update { copy(isBusy = false, message = "Grant install permission in Settings, then tap Install again. Or install via SD card.") }
++                    return@runOnIO
+                 }
+-                InstallStartResult.FAILED -> update {
+-                    copy(
+-                        updateStage = UpdateStage.FAILED,
+-                        profileUpdateMessage = updateMessage("installer_unavailable", language)
+-                    )
++
++                // Copy the APK to a location the installer can access.
++                // The RC2's package installer may not handle content:// URIs
++                // from app-private cacheDir (a known Android issue). Copying
++                // to the app-specific external directory is more reliable.
++                val extDir = java.io.File(app.getExternalFilesDir(null), "updates").apply { mkdirs() }
++                val extFile = java.io.File(extDir, "freefcc_update.apk")
++                try {
++                    file.copyTo(extFile, overwrite = true)
++                } catch (e: Exception) {
++                    log("Could not copy APK to external storage: ${e.message}")
++                    // Fall back to the cache file
+                 }
+-            }
+-        }
+-    }
++                val installFile = if (extFile.exists()) extFile else file
+ 
+-    private fun openInstallPermissionSettings(language: AppLanguage) {
+-        try {
+-            app.startActivity(android.content.Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+-                data = android.net.Uri.parse("package:${app.packageName}")
+-                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+-            })
+-            UpdateDiagnostics.record(app, "INSTALL_PERMISSION_SETTINGS_OPENED")
+-            log(if (language == AppLanguage.TR) "Android kurulum izni ayarları açıldı" else "Opened Android install permission settings")
+-        } catch (e: Exception) {
+-            update {
+-                copy(
+-                    updateStage = UpdateStage.FAILED,
+-                    profileUpdateMessage = updateMessage("installer_unavailable", language)
++                val uri = androidx.core.content.FileProvider.getUriForFile(
++                    app, "${app.packageName}.fileprovider", installFile
+                 )
+-            }
+-            UpdateDiagnostics.setResult(app, updateMessage("installer_unavailable", language), true)
+-            UpdateDiagnostics.record(app, "INSTALL_PERMISSION_SETTINGS_ERROR ${e.javaClass.simpleName}: ${e.message}")
+-            log("Could not open install permission settings: ${e.javaClass.simpleName}: ${e.message}")
+-        }
+-    }
+-
+-    private fun restorePendingUpdate() {
+-        val downloadId = prefs.getLong(updateDownloadIdKey, -1L)
+-        if (downloadId <= 0L) return
+-        runOnIO {
+-            applyDownloadSnapshot(downloadId, UpdateChecker.queryApkDownload(app, downloadId, pendingApkFile()))
+-        }
+-    }
+-
+-    private fun restoreUpdateDiagnostics() {
+-        val report = UpdateDiagnostics.report(app) ?: return
+-        val stage = when (report.outcome) {
+-            UpdateDiagnosticOutcome.FAILURE -> UpdateStage.FAILED
+-            UpdateDiagnosticOutcome.WAITING_FOR_ANDROID -> UpdateStage.WAITING_FOR_ANDROID
+-            UpdateDiagnosticOutcome.SUCCESS -> UpdateStage.COMPLETED
+-            UpdateDiagnosticOutcome.INFO -> _state.value.updateStage
+-        }
+-        update {
+-            copy(
+-                updateStage = stage,
+-                profileUpdateMessage = report.summary,
+-                updateDiagnosticSummary = report.summary,
+-                updateDiagnosticDetails = report.details.lineSequence().toList().takeLast(8).joinToString("\n"),
+-                updateDiagnosticFailure = report.isFailure
+-            )
+-        }
+-    }
+-
+-    private fun monitorPendingDownload() {
+-        val downloadId = prefs.getLong(updateDownloadIdKey, -1L)
+-        if (downloadId <= 0L) return
+-        runOnIO {
+-            while (prefs.getLong(updateDownloadIdKey, -1L) == downloadId) {
+-                val snapshot = UpdateChecker.queryApkDownload(app, downloadId, pendingApkFile())
+-                applyDownloadSnapshot(downloadId, snapshot)
+-                if (snapshot.state != DownloadState.DOWNLOADING) return@runOnIO
+-                delay(750)
+-            }
+-        }
+-    }
++                val viewIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
++                    setDataAndType(uri, "application/vnd.android.package-archive")
++                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
++                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
++                }
+ 
+-    private fun applyDownloadSnapshot(downloadId: Long, snapshot: DownloadSnapshot) {
+-        if (prefs.getLong(updateDownloadIdKey, -1L) != downloadId) return
+-        if (snapshot.state == DownloadState.READY && _state.value.updateStage in setOf(
+-                UpdateStage.WAITING_FOR_ANDROID,
+-                UpdateStage.COMPLETED,
+-                UpdateStage.FAILED
+-            )
+-        ) return
+-        val language = _state.value.language
+-        when (snapshot.state) {
+-            DownloadState.DOWNLOADING -> update {
+-                copy(
+-                    isDownloadingUpdate = true,
+-                    isUpdateDownloaded = false,
+-                    updateStage = UpdateStage.DOWNLOADING,
+-                    updateDownloadProgress = snapshot.progress,
+-                    profileUpdateMessage = if (language == AppLanguage.TR) "Güncelleme indiriliyor..." else "Downloading update..."
+-                )
+-            }
+-            DownloadState.READY -> {
+-                val apk = snapshot.file
+-                val verificationError = if (apk == null) "apk_missing" else verifyDownloadedApk(apk)
+-                if (verificationError == null) {
+-                    UpdateDiagnostics.record(app, "DOWNLOAD_READY id=$downloadId file=${apk?.name}")
+-                    update {
+-                        copy(
+-                            isDownloadingUpdate = false,
+-                            isUpdateDownloaded = true,
+-                            updateStage = UpdateStage.READY,
+-                            updateDownloadProgress = 1f,
+-                            profileUpdateMessage = updateMessage("ready", language)
+-                        )
+-                    }
+-                    log(if (language == AppLanguage.TR) "Güncelleme indirildi ve doğrulandı: ${apk!!.name}" else "Update downloaded and verified: ${apk!!.name}")
+-                } else {
+-                    UpdateDiagnostics.setResult(app, updateMessage(verificationError, language), true)
+-                    update {
+-                        copy(
+-                            isDownloadingUpdate = false,
+-                            isUpdateDownloaded = false,
+-                            updateStage = UpdateStage.FAILED,
+-                            updateDownloadProgress = 0f,
+-                            profileUpdateMessage = updateMessage(verificationError, language)
+-                        )
+-                    }
+-                    log("Update download verification failed: $verificationError")
++                // Check 2: does a package installer actually exist?
++                if (viewIntent.resolveActivity(pm) == null) {
++                    log("No package installer found. Sideload 01_PackageInstaller from the SD card, reboot, then retry.")
++                    update { copy(isBusy = false, message = "No installer. Sideload 01_PackageInstaller from SD card, reboot, retry.") }
++                    return@runOnIO
+                 }
+-            }
+-            DownloadState.FAILED -> {
+-                UpdateDiagnostics.setResult(app, updateMessage("download_failed", language), true)
+-                update {
+-                    copy(
+-                        isDownloadingUpdate = false,
+-                        isUpdateDownloaded = false,
+-                        updateStage = UpdateStage.FAILED,
+-                        updateDownloadProgress = 0f,
+-                        profileUpdateMessage = updateMessage("download_failed", language)
++
++                // Grant URI permission to all resolved installer activities —
++                // some OEM forks don't honor FLAG_GRANT_READ_URI_PERMISSION
++                // alone for the staging step.
++                val targets = pm.queryIntentActivities(viewIntent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
++                for (info in targets) {
++                    app.grantUriPermission(
++                        info.activityInfo.packageName, uri,
++                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                     )
+                 }
+-                log("Update download failed: ${snapshot.message}")
+-            }
+-            DownloadState.NONE -> Unit
+-        }
+-    }
+-
+-    private fun persistPendingUpdate(downloadId: Long, apk: File, info: UpdateInfo) {
+-        prefs.edit()
+-            .putLong(updateDownloadIdKey, downloadId)
+-            .putString(updateApkPathKey, apk.absolutePath)
+-            .putString(updateVersionKey, info.version)
+-            .putString(updateSha256Key, info.sha256.orEmpty())
+-            .apply()
+-    }
+ 
+-    private fun clearPendingUpdate(removeDownload: Boolean) {
+-        val downloadId = prefs.getLong(updateDownloadIdKey, -1L)
+-        if (removeDownload) {
+-            UpdateChecker.cancelApkDownload(app, downloadId)
+-            pendingApkFile()?.takeIf { isUpdateFile(it) }?.let { file ->
+-                runCatching { file.delete() }
++                try {
++                    app.startActivity(viewIntent)
++                    log("Launching installer...")
++                    update { copy(isBusy = false, message = "Installer launched — follow the on-screen prompts.") }
++                } catch (e: android.content.ActivityNotFoundException) {
++                    log("No package installer on this device. Install via SD card + FileManager.")
++                    update { copy(isBusy = false, message = "No installer. Install via SD card + FileManager.") }
++                } catch (e: Exception) {
++                    log("Install failed: ${e.message}")
++                    update { copy(isBusy = false, message = "Install failed: ${e.message}") }
++                }
++            } catch (e: Exception) {
++                log("Install error: ${e.message}")
++                update { copy(isBusy = false, message = "Install error: ${e.message}") }
+             }
+         }
+-        prefs.edit()
+-            .remove(updateDownloadIdKey)
+-            .remove(updateApkPathKey)
+-            .remove(updateVersionKey)
+-            .remove(updateSha256Key)
+-            .apply()
+-    }
+-
+-    private fun pendingApkFile(): File? {
+-        val path = prefs.getString(updateApkPathKey, null) ?: return null
+-        return File(path).takeIf { isUpdateFile(it) }
+-    }
+-
+-    private fun isUpdateFile(file: File): Boolean = runCatching {
+-        val updatesDir = File(app.getExternalFilesDir(null), "updates").canonicalFile
+-        val candidate = file.canonicalFile
+-        candidate.parentFile == updatesDir && candidate.extension.equals("apk", ignoreCase = true)
+-    }.getOrDefault(false)
+-
+-    /** Verifies the exact artifact before handing it to Android's package installer. */
+-    @Suppress("DEPRECATION")
+-    private fun verifyDownloadedApk(apk: File): String? {
+-        if (!apk.isFile || apk.length() == 0L) return "apk_missing"
+-        val expectedHash = prefs.getString(updateSha256Key, "").orEmpty()
+-        if (expectedHash.isNotEmpty() && !UpdateChecker.sha256(apk).equals(expectedHash, ignoreCase = true)) {
+-            return "verification_failed"
+-        }
+-        val archive = app.packageManager.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+-            ?: return "verification_failed"
+-        if (archive.packageName != app.packageName) return "verification_failed"
+-        if (archive.versionName != prefs.getString(updateVersionKey, "")) return "verification_failed"
+-        val installed = app.packageManager.getPackageInfo(app.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+-        if (archive.longVersionCode <= installed.longVersionCode) return "verification_failed"
+-        val archiveSigners = signerDigests(archive)
+-        val installedSigners = signerDigests(installed)
+-        if (archiveSigners.isEmpty() || installedSigners.isEmpty() || archiveSigners.intersect(installedSigners).isEmpty()) {
+-            return "verification_failed"
+-        }
+-        return null
+-    }
+-
+-    private fun signerDigests(packageInfo: android.content.pm.PackageInfo): Set<String> =
+-        packageInfo.signingInfo?.apkContentsSigners?.map { signature ->
+-            MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+-                .joinToString("") { "%02x".format(it) }
+-        }?.toSet().orEmpty()
+-
+-    private fun updateMessage(key: String, language: AppLanguage): String {
+-        val ui = TextCatalog.ui(language)
+-        return when (key) {
+-            "ready" -> ui.updateReadyToInstall
+-            "install_permission" -> ui.installPermissionRequired
+-            "installer_open" -> ui.installerOpen
+-            "download_cancelled" -> ui.updateCancelled
+-            "download_failed" -> ui.updateDownloadFailed
+-            "verification_failed", "apk_missing" -> ui.updateVerificationFailed
+-            "installer_unavailable" -> ui.installerUnavailable
+-            else -> ui.updateDownloadFailed
+-        }
+     }
+ 
+     // --- Helpers ---
+@@ -1223,28 +951,43 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+     /** Returns true if the controller is connected, logs a hint if not. */
+     private fun isControllerReachable(): Boolean {
+         if (_state.value.isConnected) return true
+-        log(if (_state.value.language == AppLanguage.TR) "Önce kumandaya bağlan" else "Connect to the controller first")
++        log("Connect to the controller first")
+         return false
+     }
+ 
+-    /** Returns the cached serial, or probes the controller if not yet known. Caches the result in SharedPreferences. */
++    /**
++     * Resolves the aircraft serial for 4G, in priority order:
++     *   1. A manually-entered serial (always wins).
++     *   2. The serial from this session / a previous session (cache).
++     *   3. An active version/serial query to the aircraft.
++     *   4. A longer passive telemetry listen.
++     * The first non-empty result is cached in SharedPreferences.
++     */
+     private fun getOrProbeSerial(): String {
++        // 1. Manual serial takes priority — trust exactly what the user typed,
++        //    whatever the format (do NOT re-validate; they entered it on purpose).
++        val manual = prefs.getString("manual_aircraft_sn", "").orEmpty()
++        if (manual.isNotEmpty()) {
++            update { copy(aircraftSerial = manual) }
++            return manual
++        }
++
++        // 2. Cached from this or a previous session.
+         var serial = _state.value.aircraftSerial
+-        if (serial.isEmpty()) {
+-            // Fall back to a serial persisted in a previous session.
+-            serial = prefs.getString("aircraft_serial", "").orEmpty()
+-            if (serial.isNotEmpty()) {
+-                update { copy(aircraftSerial = serial) }
+-            }
++        if (serial.isEmpty()) serial = prefs.getString("aircraft_serial", "").orEmpty()
++        if (serial.isNotEmpty()) {
++            update { copy(aircraftSerial = serial) }
++            return serial
+         }
+-        if (serial.isEmpty()) {
+-            log(if (_state.value.language == AppLanguage.TR) "Hava aracı seri numarası aranıyor..." else "Probing for aircraft serial...")
+-            serial = transport.probeSerial(2000)
+-            if (serial.isNotEmpty()) {
+-                update { copy(aircraftSerial = serial) }
+-                prefs.edit().putString("aircraft_serial", serial).apply()
+-                log(if (_state.value.language == AppLanguage.TR) "Hava aracı seri no: $serial (önbelleğe alındı)" else "Aircraft serial: $serial (cached)")
+-            }
++
++        // 3. Active query, then 4. longer passive listen.
++        log("Reading aircraft serial...")
++        serial = transport.probeSerialActive(800)
++        if (serial.isEmpty()) serial = transport.probeSerial(8000)
++        if (serial.isNotEmpty()) {
++            update { copy(aircraftSerial = serial) }
++            prefs.edit().putString("aircraft_serial", serial).apply()
++            log("Aircraft serial: $serial (cached)")
+         }
+         return serial
+     }
+@@ -1260,25 +1003,24 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+      */
+     private fun formatVersionResponse(payload: ByteArray): String {
+         val lines = mutableListOf<String>()
+-        val ui = text
+ 
+         if (payload.size >= 18) {
+             val hwVersion = String(payload, 2, 16, Charsets.US_ASCII).trimEnd('\u0000')
+-            lines.add("${ui.hardware}: $hwVersion")
++            lines.add("Hardware: $hwVersion")
+         }
+ 
+         if (payload.size >= 22) {
+             val ldrVersion = readUInt32LE(payload, 18)
+-            lines.add("${ui.bootloader}: ${formatVersion(ldrVersion)}")
++            lines.add("Bootloader: ${formatVersion(ldrVersion)}")
+         }
+ 
+         if (payload.size >= 26) {
+             val appVersion = readUInt32LE(payload, 22)
+-            lines.add("${ui.firmware}: ${formatVersion(appVersion)}")
++            lines.add("Firmware: ${formatVersion(appVersion)}")
+         }
+ 
+         lines.add("")
+-        lines.add(ui.rawPayload(payload.size))
++        lines.add("Raw payload (${payload.size} bytes):")
+         lines.add(payload.joinToString(" ") { "%02x".format(it) })
+ 
+         return lines.joinToString("\n")
+@@ -1317,4 +1059,4 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
+     private fun runOnIO(block: suspend () -> Unit) {
+         viewModelScope.launch(Dispatchers.IO) { block() }
+     }
+-}
++}
+\ No newline at end of file
