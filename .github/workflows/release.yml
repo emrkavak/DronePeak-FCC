@@ -63,7 +63,7 @@ jobs:
           EXPECTED_VERSION="${RELEASE_TAG#v}"
           test -n "$APK" && test -f "$APK" && test -f "$METADATA"
           test "$(jq -r '.elements[0].versionName' "$METADATA")" = "$EXPECTED_VERSION"
-          test "$(jq -r '.elements[0].versionCode' "$METADATA")" = "31"
+          test "$(jq -r '.elements[0].versionCode' "$METADATA")" = "32"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -1 | grep -F "package: name='com.dronepeak.app'"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
 
