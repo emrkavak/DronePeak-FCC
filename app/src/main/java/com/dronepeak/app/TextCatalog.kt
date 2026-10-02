@@ -109,7 +109,25 @@ data class UiText(
     val hardware: String,
     val bootloader: String,
     val firmware: String,
-    val rawPayload: (Int) -> String
+    val rawPayload: (Int) -> String,
+
+    // --- Redesign: control-page structure, blocked reasons, manual serial ---
+    val control: String,
+    val utilities: String,
+    val aircraftLink: String,
+    val manualSerial: String,
+    val manualSerialHint: String,
+    val useManualSerial: String,
+    val clearManualSerial: String,
+    val serialIsManual: String,
+    val blockedBusy: String,
+    val blockedNeedLink: String,
+    val blockedNeedSerial: String,
+    val blockedNeedAircraft: String,
+    val keepaliveConflicts4g: String,
+    val fourGUnverified: String,
+    val detectedSerial: String,
+    val reapplyFcc: String
 )
 
 object TextCatalog {
@@ -217,7 +235,23 @@ object TextCatalog {
         hardware = "Donanım",
         bootloader = "Bootloader",
         firmware = "Firmware",
-        rawPayload = { "Ham payload ($it bayt):" }
+        rawPayload = { "Ham veri ($it bayt):" },
+        control = "Kontrol",
+        utilities = "Araçlar",
+        aircraftLink = "Bağlantı",
+        manualSerial = "Hava aracı seri numarası",
+        manualSerialHint = "Kumanda seri okuyamıyorsa elle gir. Elle girilen seri tüm otomatik algılamayı geçer.",
+        useManualSerial = "Bu seriyi kullan",
+        clearManualSerial = "Elle girdiği seriyi temizle",
+        serialIsManual = "Elle girildi",
+        blockedBusy = "Başka bir donanım işlemi sürüyor",
+        blockedNeedLink = "Önce kumandayı bağla",
+        blockedNeedSerial = "Hava aracı seri numarası gerekli",
+        blockedNeedAircraft = "Hava aracı açık ve link olmalı",
+        keepaliveConflicts4g = "Keepalive her 2 saniyede bir FCC yeniden uyguluyor ve 4G aktivasyonunu geçersiz kılabilir.",
+        fourGUnverified = "4G soketi yanıt vermez; yazma tamamlandı, hava aracından doğrula.",
+        detectedSerial = "Okunan seri",
+        reapplyFcc = "Yeniden uygula"
     )
 
     private val en = UiText(
@@ -319,6 +353,22 @@ object TextCatalog {
         hardware = "Hardware",
         bootloader = "Bootloader",
         firmware = "Firmware",
-        rawPayload = { "Raw payload ($it bytes):" }
+        rawPayload = { "Raw payload ($it bytes):" },
+        control = "Control",
+        utilities = "Utilities",
+        aircraftLink = "Link",
+        manualSerial = "Aircraft serial",
+        manualSerialHint = "Type it here when the controller cannot report a serial. A manual serial wins over every detected value.",
+        useManualSerial = "Use this serial",
+        clearManualSerial = "Clear manual serial",
+        serialIsManual = "Manual",
+        blockedBusy = "Another hardware operation is running",
+        blockedNeedLink = "Connect the controller first",
+        blockedNeedSerial = "Aircraft serial required",
+        blockedNeedAircraft = "Aircraft must be on and linked",
+        keepaliveConflicts4g = "Keepalive re-applies FCC every 2s and can undo the 4G activation.",
+        fourGUnverified = "The 4G socket never acknowledges; the write finished, so confirm it on the aircraft.",
+        detectedSerial = "Detected serial",
+        reapplyFcc = "Reapply"
     )
 }

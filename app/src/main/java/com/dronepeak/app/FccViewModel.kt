@@ -38,24 +38,56 @@ enum class UpdateStage {
     FAILED
 }
 
+/**
+ * Severity of [AppState.message] and the panel status lines.
+ *
+ * The UI used to decide colour by substring-matching translated prose
+ * ("does it contain 'failed' / 'başarısız' / 'yok'?"), which silently
+ * mis-coloured real failures — "4G error: …" matched nothing. Tone is set
+ * here, where the outcome is actually known, so the UI never has to guess.
+ */
+enum class Tone { NEUTRAL, INFO, SUCCESS, WARNING, DANGER }
+
+/**
+ * Outcome of the last 4G activation attempt.
+ *
+ * WRITTEN is deliberately distinct from SUCCESS: the 4G socket never
+ * acknowledges, so a completed run only proves the 128 datagrams left the
+ * app — it does not prove the aircraft activated 4G.
+ */
+enum class FourGOutcome {
+    IDLE,
+    RUNNING,
+    WRITTEN,
+    NO_SERIAL,
+    NO_DONGLE,
+    WRITE_FAILED,
+    ERROR
+}
+
 data class AppState(
     val language: AppLanguage = AppLanguage.TR,
     val status: String = "idle",
     val message: String = "",
+    val messageTone: Tone = Tone.NEUTRAL,
     val isConnected: Boolean = false,
     val isFccEnabled: Boolean = false,
     val is4gBusy: Boolean = false,
     val fourGMessage: String = "",
+    val fourGOutcome: FourGOutcome = FourGOutcome.IDLE,
     val isBusy: Boolean = false,
     val isHardwareBusy: Boolean = false,
     val busyProgress: Float = 0f,
     val aircraftSerial: String = "",
+    val manualSerial: String = "",
+    val isProbingSerial: Boolean = false,
     val controllerModel: String = "",
     val deviceInfo: String = "",
     val isQueryingInfo: Boolean = false,
     val autoFcc: Boolean = false,
     val isLedBusy: Boolean = false,
     val ledStatus: String = "",
+    val ledTone: Tone = Tone.NEUTRAL,
     val logMessages: List<String> = emptyList(),
     // Update state
     val updateInfo: UpdateInfo? = null,
@@ -73,6 +105,36 @@ data class AppState(
     // Keepalive state
     val isKeepaliveRunning: Boolean = false
 )
+
+/**
+ * Pure aircraft-serial resolution policy.
+ *
+ * Split out of [FccViewModel] so it can be unit-tested without an Android
+ * Context, and so the priority order is stated in one place. This logic
+ * regressed once already: a revision deleted the active-query step and
+ * shortened the passive window, which made 4G abort on a controller that was
+ * already connected.
+ */
+internal object SerialResolution {
+
+    /**
+     * Highest-priority non-blank source wins. A manually-entered serial beats
+     * every detected value — the user typed it on purpose, so trust its format
+     * whatever it looks like.
+     */
+    fun pick(manual: String, session: String, cached: String): String =
+        manual.ifBlank { session.ifBlank { cached } }
+
+    /**
+     * Pulls a W[AM]xxx model code out of a serial when one is present.
+     *
+     * A full 1581… factory serial contains no model code, so null is the
+     * expected answer there — not a failure. Advisory only: the 4G dongle
+     * probe is the authoritative gate, never this value.
+     */
+    fun modelHint(serial: String): String? =
+        Regex("[wW][aAmM][0-9]{3}").find(serial)?.value?.lowercase()
+}
 
 /**
  * Manages all app state and business logic.
@@ -100,6 +162,16 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
          * that ship with or accept the Cellular Dongle 2.
          */
         private val MODELS_WITH_4G = setOf("wa341", "wa233", "wa234", "wm630", "wa140")
+
+        /** Active VersionInquiry window. A direct query answers well inside this. */
+        const val ACTIVE_QUERY_MS = 800
+
+        /**
+         * Passive telemetry listen. Long on purpose: it only succeeds if the
+         * aircraft happens to broadcast a serial-bearing frame, so the window
+         * has to cover a normal telemetry cadence.
+         */
+        const val PASSIVE_LISTEN_MS = 8000
     }
 
     private val _state = MutableStateFlow(AppState())
@@ -124,8 +196,12 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         // Restore the cached aircraft serial from a previous session so the
         // user does not have to re-probe before 4G if the drone is the same.
         val cachedSerial = prefs.getString("aircraft_serial", "").orEmpty()
+        val cachedManual = prefs.getString("manual_aircraft_sn", "").orEmpty()
         val language = AppLanguage.fromPref(prefs.getString("language", null))
         update { copy(language = language) }
+        if (cachedManual.isNotEmpty()) {
+            update { copy(manualSerial = cachedManual) }
+        }
         if (cachedSerial.isNotEmpty()) {
             update { copy(aircraftSerial = cachedSerial) }
         }
@@ -138,6 +214,35 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     /** Releases the shared hardware lock. Must run in a finally block covering every exit path. */
     private fun endHardwareOp() = HardwareLock.end()
+
+    /**
+     * Claims the hardware lock, or fails *visibly*.
+     *
+     * Every busy path used to call [beginHardwareOp] directly and return on
+     * false after only a `log()` — which lands on the Log tab, three taps away.
+     * With keepalive re-applying FCC every 2 seconds that window is open a
+     * noticeable fraction of the time, so a tap looked like a dead button.
+     * Now the contention is reported in [AppState.message], which the status
+     * strip renders in place.
+     *
+     * @param pending localized name of the operation the caller wanted to run
+     */
+    private fun claimHardwareOp(pending: String): Boolean {
+        if (beginHardwareOp()) return true
+        val tr = _state.value.language == AppLanguage.TR
+        val message = if (tr) {
+            "Donanım meşgul — \"$pending\" başlatılamadı. Bir saniye sonra tekrar dene."
+        } else {
+            "Hardware busy — \"$pending\" could not start. Try again in a moment."
+        }
+        update { copy(message = message, messageTone = Tone.WARNING) }
+        log(message)
+        return false
+    }
+
+    /** Short localized label for an operation, used in busy/contention messages. */
+    private fun label(tr: String, en: String): String =
+        if (_state.value.language == AppLanguage.TR) tr else en
 
     fun setLanguage(language: AppLanguage) {
         prefs.edit().putString("language", language.prefValue).apply()
@@ -193,10 +298,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * service, and launches DJI Fly.
      */
     private fun autoConnectAndApply() {
-        if (!beginHardwareOp()) {
-            log(if (_state.value.language == AppLanguage.TR) "Auto-FCC atlandı — başka bir donanım işlemi çalışıyor" else "Auto-FCC skipped — another hardware operation is already running")
-            return
-        }
+        if (!claimHardwareOp(label("Otomatik FCC", "Auto-FCC"))) return
         val language = _state.value.language
         runOnIO {
             try {
@@ -204,10 +306,10 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 delay(1000)
 
                 // Try to connect — scans all known ports
-                update { copy(status = "connecting", message = if (language == AppLanguage.TR) "Otomatik bağlanıyor..." else "Auto-connecting...") }
+                update { copy(status = "connecting", message = if (language == AppLanguage.TR) "Otomatik bağlanıyor..." else "Auto-connecting...", messageTone = Tone.INFO) }
                 if (!transport.connect()) {
                     log(if (language == AppLanguage.TR) "Auto-FCC: kumanda bulunamadı — drone açık mı?" else "Auto-FCC: controller not found — is the drone powered on?")
-                    update { copy(status = "disconnected", message = if (language == AppLanguage.TR) "Kumanda bulunamadı. Bağlan'a bastığında tekrar deneyebilirsin." else "Controller not found. Auto-FCC will retry when you tap Connect.") }
+                    update { copy(status = "disconnected", message = if (language == AppLanguage.TR) "Kumanda bulunamadı. Bağlan'a bastığında tekrar deneyebilirsin." else "Controller not found. Auto-FCC will retry when you tap Connect.", messageTone = Tone.DANGER) }
                     return@runOnIO
                 }
 
@@ -225,14 +327,15 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                         status = "connected",
                         isConnected = true,
                         aircraftSerial = serial,
-                        message = if (language == AppLanguage.TR) "Bağlandı. FCC otomatik uygulanıyor..." else "Connected. Auto-applying FCC..."
+                        message = if (language == AppLanguage.TR) "Bağlandı. FCC otomatik uygulanıyor..." else "Connected. Auto-applying FCC...",
+                        messageTone = Tone.SUCCESS
                     )
                 }
                 if (serial.isNotEmpty()) log(if (language == AppLanguage.TR) "Hava aracı seri no: $serial" else "Aircraft serial: $serial")
 
                 // Apply FCC
                 delay(500)
-                update { copy(status = "applying", isBusy = true, busyProgress = 0f, message = if (language == AppLanguage.TR) "FCC modu uygulanıyor..." else "Applying FCC mode...") }
+                update { copy(status = "applying", isBusy = true, busyProgress = 0f, message = if (language == AppLanguage.TR) "FCC modu uygulanıyor..." else "Applying FCC mode...", messageTone = Tone.INFO) }
                 log(if (language == AppLanguage.TR) "Auto-FCC: FCC modu uygulanıyor..." else "Auto-FCC: applying FCC mode...")
 
                 val profile = Profiles.load(app, "fcc.json")
@@ -250,6 +353,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                         copy(
                             status = "fcc_enabled",
                             message = if (language == AppLanguage.TR) "FCC açıldı. Keepalive başlatılıyor..." else "FCC enabled. Starting keepalive...",
+                            messageTone = Tone.SUCCESS,
                             isFccEnabled = true,
                             isBusy = false,
                             busyProgress = 1f,
@@ -266,7 +370,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
                     // Auto-launch DJI Fly
                     delay(500)
-                    update { copy(message = if (language == AppLanguage.TR) "FCC aktif. DJI Fly açılıyor..." else "FCC active. Launching DJI Fly...") }
+                    update { copy(message = if (language == AppLanguage.TR) "FCC aktif. DJI Fly açılıyor..." else "FCC active. Launching DJI Fly...", messageTone = Tone.SUCCESS) }
                     log(if (language == AppLanguage.TR) "Auto-FCC: DJI Fly açılıyor" else "Auto-FCC: launching DJI Fly")
                     launchDjiFly()
                 } else {
@@ -274,6 +378,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                         copy(
                             status = "connected",
                             message = if (language == AppLanguage.TR) "Auto-FCC başarısız — manuel dene" else "Auto-FCC failed — try manually",
+                            messageTone = Tone.DANGER,
                             isBusy = false,
                             busyProgress = 0f
                         )
@@ -282,7 +387,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 log(if (language == AppLanguage.TR) "Auto-FCC hatası: ${e.message}" else "Auto-FCC error: ${e.message}")
-                update { copy(status = "disconnected", message = if (language == AppLanguage.TR) "Auto-FCC hatası: ${e.message}" else "Auto-FCC error: ${e.message}", isBusy = false, busyProgress = 0f) }
+                update { copy(status = "disconnected", message = if (language == AppLanguage.TR) "Auto-FCC hatası: ${e.message}" else "Auto-FCC error: ${e.message}", messageTone = Tone.DANGER, isBusy = false, busyProgress = 0f) }
             } finally {
                 endHardwareOp()
             }
@@ -296,12 +401,9 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * Probes for the aircraft serial number after connecting.
      */
     fun connect() {
-        if (!beginHardwareOp()) {
-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
-            return
-        }
+        if (!claimHardwareOp(label("Bağlan", "Connect"))) return
         val language = _state.value.language
-        update { copy(status = "connecting", message = if (language == AppLanguage.TR) "Kumandaya bağlanılıyor..." else "Connecting to controller...") }
+        update { copy(status = "connecting", message = if (language == AppLanguage.TR) "Kumandaya bağlanılıyor..." else "Connecting to controller...", messageTone = Tone.INFO) }
         log(if (language == AppLanguage.TR) "Kumandaya bağlanılıyor..." else "Connecting to controller...")
 
         runOnIO {
@@ -324,6 +426,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                             } else {
                                 if (language == AppLanguage.TR) "Bağlandı. FCC uygulamaya hazır." else "Connected. Ready to apply FCC."
                             },
+                            messageTone = Tone.SUCCESS,
                             isConnected = true,
                             aircraftSerial = serial
                         )
@@ -334,7 +437,8 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                         copy(
                             status = "disconnected",
                             message = if (language == AppLanguage.TR) "Kumanda bulunamadı. Drone açık ve bağlı olmalı." else "Controller not found. Make sure the drone is powered on and linked.",
-                            isConnected = false
+                            isConnected = false,
+                            messageTone = Tone.DANGER
                         )
                     }
                     log(if (language == AppLanguage.TR) "Bağlantı başarısız — drone açık mı?" else "Connection failed — is the drone powered on?")
@@ -352,12 +456,9 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * The profile already runs 2 rounds internally for reliability.
      */
     fun enableFcc() {
-        if (!beginHardwareOp()) {
-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
-            return
-        }
+        if (!claimHardwareOp(label("FCC", "FCC"))) return
         val language = _state.value.language
-        update { copy(status = "applying", isBusy = true, busyProgress = 0f, message = if (language == AppLanguage.TR) "FCC modu açılıyor..." else "Enabling FCC mode...") }
+        update { copy(status = "applying", isBusy = true, busyProgress = 0f, message = if (language == AppLanguage.TR) "FCC modu açılıyor..." else "Enabling FCC mode...", messageTone = Tone.INFO, fourGMessage = "", fourGOutcome = FourGOutcome.IDLE) }
         log(if (language == AppLanguage.TR) "FCC modu açılıyor..." else "Enabling FCC mode...")
 
         runOnIO {
@@ -379,6 +480,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                         copy(
                             status = "fcc_enabled",
                             message = if (language == AppLanguage.TR) "FCC modu açıldı" else "FCC mode enabled",
+                            messageTone = Tone.SUCCESS,
                             isFccEnabled = true,
                             isBusy = false,
                             busyProgress = 1f,
@@ -391,6 +493,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                         copy(
                             status = "connected",
                             message = if (language == AppLanguage.TR) "FCC uygulanamadı — RC bağlantısı yok. Drone açık ve bağlı olmalı." else "FCC apply failed — RC link unreachable. Make sure the drone is on and linked.",
+                            messageTone = Tone.DANGER,
                             isBusy = false,
                             busyProgress = 0f
                         )
@@ -399,7 +502,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 log(if (language == AppLanguage.TR) "FCC uygulama hatası: ${e.message}" else "FCC apply error: ${e.message}")
-                update { copy(status = "connected", message = if (language == AppLanguage.TR) "FCC uygulama hatası: ${e.message}" else "FCC apply error: ${e.message}", isBusy = false, busyProgress = 0f) }
+                update { copy(status = "connected", message = if (language == AppLanguage.TR) "FCC uygulama hatası: ${e.message}" else "FCC apply error: ${e.message}", messageTone = Tone.DANGER, isBusy = false, busyProgress = 0f) }
             } finally {
                 endHardwareOp()
             }
@@ -408,17 +511,14 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     /** Sends the CE restore command: a single frame that resets to factory region. */
     fun disableFcc() {
-        if (!beginHardwareOp()) {
-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
-            return
-        }
+        if (!claimHardwareOp(label("CE geri yükleme", "CE restore"))) return
         val language = _state.value.language
         // Stop keepalive first — otherwise it re-applies FCC 2 seconds after
         // we restore CE, undoing the user's intent.
         if (_state.value.isKeepaliveRunning) {
             stopKeepalive()
         }
-        update { copy(status = "restoring", isBusy = true, busyProgress = 0f, message = if (language == AppLanguage.TR) "CE modu geri yükleniyor..." else "Restoring CE mode...") }
+        update { copy(status = "restoring", isBusy = true, busyProgress = 0f, message = if (language == AppLanguage.TR) "CE modu geri yükleniyor..." else "Restoring CE mode...", messageTone = Tone.INFO, fourGMessage = "", fourGOutcome = FourGOutcome.IDLE) }
         log(if (language == AppLanguage.TR) "CE modu geri yükleniyor..." else "Restoring CE mode...")
 
         runOnIO {
@@ -431,15 +531,15 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 )
 
                 if (success) {
-                    update { copy(status = "connected", message = if (language == AppLanguage.TR) "CE modu geri yüklendi" else "CE mode restored", isFccEnabled = false, isBusy = false) }
+                    update { copy(status = "connected", message = if (language == AppLanguage.TR) "CE modu geri yüklendi" else "CE mode restored", messageTone = Tone.SUCCESS, isFccEnabled = false, isBusy = false) }
                     log(if (language == AppLanguage.TR) "CE modu geri yüklendi" else "CE mode restored")
                 } else {
-                    update { copy(status = "connected", message = if (language == AppLanguage.TR) "CE geri yüklenemedi — RC bağlantısı yok" else "CE restore failed — RC link unreachable", isBusy = false) }
+                    update { copy(status = "connected", message = if (language == AppLanguage.TR) "CE geri yüklenemedi — RC bağlantısı yok" else "CE restore failed — RC link unreachable", messageTone = Tone.DANGER, isBusy = false) }
                     log(if (language == AppLanguage.TR) "CE geri yükleme başarısız" else "CE restore failed")
                 }
             } catch (e: Exception) {
                 log(if (language == AppLanguage.TR) "CE geri yükleme hatası: ${e.message}" else "CE restore error: ${e.message}")
-                update { copy(status = "connected", message = if (language == AppLanguage.TR) "CE geri yükleme hatası: ${e.message}" else "CE restore error: ${e.message}", isBusy = false) }
+                update { copy(status = "connected", message = if (language == AppLanguage.TR) "CE geri yükleme hatası: ${e.message}" else "CE restore error: ${e.message}", messageTone = Tone.DANGER, isBusy = false) }
             } finally {
                 endHardwareOp()
             }
@@ -528,30 +628,34 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
     /**
      * Sends the 128-frame 4G activation profile.
      * The aircraft serial is embedded in each frame's payload at runtime.
-     * 4G frames are sent via Unix domain socket (/duss/mb/0x205), not TCP.
+     * 4G frames go over the abstract Unix socket `/duss/mb/0x205`, not TCP.
      *
-     * The socket does not respond, so this can only confirm the frames were
-     * written — never confirm the aircraft actually activated 4G. There is
-     * no "off" action: no send-only command exists to reliably deactivate it.
+     * That socket never acknowledges, so a completed run proves only that the
+     * 128 datagrams left the app — it does **not** prove the aircraft
+     * activated 4G. There is no reverse command either. The UI therefore
+     * reports [FourGOutcome.WRITTEN], never a success badge.
      *
-     * Guards (added to stop the most common failure modes early):
-     * 1. Aircraft serial must be non-empty AND at least 6 chars. A 6-char
-     *    W[AM]xxx model code (WA341, WM630) is the minimum the 4G payload
-     *    format needs — a shorter string would produce a malformed payload.
-     * 2. Model code must be in the 4G-capable set. The Mini series rejects
-     *    4G at the firmware level; we tell the user up front rather than
-     *    fail after writing 128 frames.
-     * 3. The 4G dongle must be present (the abstract socket must be
-     *    connectable). If `/duss/mb/0x205` does not exist, the cellular
-     *    module is not attached and no frame can succeed.
+     * Guards:
+     * 1. Aircraft serial must be present — it is embedded in every payload.
+     *    No length check: the probe may return either the full 1581… factory
+     *    serial or a short W[AM]xxx model code, and both build a valid frame.
+     * 2. The 4G dongle must be present — this is the authoritative gate. If
+     *    `/duss/mb/0x205` is not connectable, no cellular module is attached
+     *    and all 128 frames would be dropped, so we stop before writing them.
+     * 3. Model code is advisory only, logged when it is not a known-4G model.
+     *    A full 1581… serial carries no model code to check and the list is
+     *    not authoritative — DJI ships the Cellular Dongle 2 for the Mini 4 Pro
+     *    as well. Blocking on it would reject working hardware.
+     *
+     * Ordering note: FCC keepalive re-asserts the FCC radio profile every 2s.
+     * If it is running, 4G activation competes with it for [HardwareLock] and
+     * the keepalive may re-assert FCC immediately afterwards. The UI warns
+     * about this rather than silently interleaving the two.
      */
     fun send4gActivationFrames() {
-        if (!beginHardwareOp()) {
-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
-            return
-        }
+        if (!claimHardwareOp(label("4G aktivasyonu", "4G activation"))) return
         val language = _state.value.language
-        update { copy(is4gBusy = true, busyProgress = 0f, fourGMessage = "") }
+        update { copy(is4gBusy = true, busyProgress = 0f, fourGMessage = "", fourGOutcome = FourGOutcome.RUNNING) }
         log(if (language == AppLanguage.TR) "4G aktivasyon frameleri gönderiliyor..." else "Sending 4G activation frames...")
 
         runOnIO {
@@ -561,27 +665,52 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 // Guard 1: we need *some* serial to embed in the payload.
                 if (serial.isEmpty()) {
                     update {
-                        copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "4G için hava aracı bağlı olmalı. Drone'u aç, link kur ve önce Bağlan'a bas." else "4G needs the aircraft connected. Power on the drone, link it, and tap Connect first.")
+                        copy(
+                            is4gBusy = false,
+                            fourGOutcome = FourGOutcome.NO_SERIAL,
+                            fourGMessage = if (language == AppLanguage.TR) {
+                                "Hava aracı seri numarası okunamadı. Canlı görüntü açıkken drone'u aç ve link et, ya da Bilgi sayfasından seriyi elle gir."
+                            } else {
+                                "Could not read the aircraft serial. Power on and link the aircraft with the live view up, or type the serial on the Info tab."
+                            }
+                        )
                     }
-                    log(if (language == AppLanguage.TR) "4G aktivasyon başarısız — hava aracı seri numarası alınamadı; önce Bağlan'a bas" else "4G activation failed — no aircraft serial detected; power on the drone and tap Connect first")
+                    log(if (language == AppLanguage.TR) "4G aktivasyon başarısız — hava aracı seri numarası alınamadı" else "4G activation failed — no aircraft serial could be read")
                     return@runOnIO
                 }
 
                 // Advisory only: pull a W[AM]xxx model code from anywhere in the
                 // serial (a full 1581… serial won't contain one). Never blocks.
-                val modelCode = serial.take(5).lowercase()
+                val modelHint = SerialResolution.modelHint(serial)
+                if (modelHint != null && modelHint !in MODELS_WITH_4G) {
+                    log(
+                        if (language == AppLanguage.TR) {
+                            "Not: model '$modelHint' bilinen 4G listesinde değil; yine de deneniyor. 4G aktive olmazsa bu hava aracı Cellular Dongle 2'yi kabul etmiyor olabilir."
+                        } else {
+                            "Note: model '$modelHint' isn't in the known-4G list, but a dongle check follows — trying anyway. If 4G doesn't activate, this aircraft may not accept the Cellular Dongle 2."
+                        }
+                    )
+                }
 
-                // Guard 3: dongle pre-check — fast-fail if the socket does not exist.
+                // Guard 2 (authoritative): dongle pre-check — fast-fail if the socket does not exist.
                 if (!transport.is4gDonglePresent()) {
                     update {
-                        copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "4G dongle algılanmadı. DJI Cellular Dongle 2'yi hava aracına bağlayıp tekrar dene." else "4G dongle not detected. Connect a DJI Cellular Dongle 2 to the aircraft and try again.")
+                        copy(
+                            is4gBusy = false,
+                            fourGOutcome = FourGOutcome.NO_DONGLE,
+                            fourGMessage = if (language == AppLanguage.TR) {
+                                "4G dongle algılanmadı. DJI Cellular Dongle 2'yi hava aracına bağla (Mini 4 Pro için 4G montaj kiti gerekir) ve tekrar dene."
+                            } else {
+                                "4G dongle not detected. Connect a DJI Cellular Dongle 2 to the aircraft (Mini 4 Pro also needs its 4G mounting kit) and try again."
+                            }
+                        )
                     }
                     log(if (language == AppLanguage.TR) "4G aktivasyon iptal — /duss/mb/0x205 soketine bağlanılamıyor (dongle yok?)" else "4G activation aborted — 4G socket /duss/mb/0x205 not connectable (no dongle?)")
                     return@runOnIO
                 }
 
                 val profile = Profiles.load4g(app, serial)
-                log(if (language == AppLanguage.TR) "4G profili yüklendi: ${profile.frames.size} frame (seri: $serial, model: $modelCode)" else "Loaded 4G profile: ${profile.frames.size} frames (serial: $serial, model: $modelCode)")
+                log(if (language == AppLanguage.TR) "4G profili yüklendi: ${profile.frames.size} frame (seri: $serial, model: ${modelHint ?: "bilinmiyor"})" else "Loaded 4G profile: ${profile.frames.size} frames (serial: $serial, model: ${modelHint ?: "unknown"})")
 
                 // 4G uses Unix domain socket, not TCP
                 val success = transport.sendFramesUnix(
@@ -590,26 +719,60 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 ) { progress -> update { copy(busyProgress = progress) } }
 
                 if (success) {
+                    val written = if (language == AppLanguage.TR) {
+                        "${profile.frames.size} aktivasyon frame'i yazıldı. Sokak yanıt vermediği için bu, 4G'nin gerçekten aktive olduğunu kanıtlamaz — hava aracından doğrula."
+                    } else {
+                        "${profile.frames.size} activation frames written. The socket never acknowledges, so this does not prove 4G is active — confirm it on the aircraft."
+                    }
+                    val conflicting = _state.value.isKeepaliveRunning
                     update {
                         copy(
                             is4gBusy = false,
                             busyProgress = 0f,
-                            fourGMessage = if (language == AppLanguage.TR) "Tüm aktivasyon frameleri yazıldı — 4G durumunu hava aracında kontrol et." else "All activation frames written successfully — check 4G status on the aircraft."
+                            fourGOutcome = FourGOutcome.WRITTEN,
+                            fourGMessage = if (conflicting) {
+                                (if (language == AppLanguage.TR) {
+                                    "$written Uyarı: FCC keepalive her 2 saniyede bir yeniden uyguluyor ve 4G aktivasyonunu geçersiz kılabilir — doğruladıktan sonra keepalive'i durdur."
+                                } else {
+                                    "$written Warning: FCC keepalive re-applies every 2s and can undo the 4G activation — stop keepalive once you have confirmed it."
+                                })
+                            } else written
                         )
                     }
                     log(if (language == AppLanguage.TR) "4G aktivasyon: ${profile.frames.size} frame Unix soketine yazıldı" else "4G activation: all ${profile.frames.size} frames written successfully via Unix socket")
+                    if (conflicting) {
+                        log(if (language == AppLanguage.TR) "4G/FCC çakışma riski — keepalive çalışıyor, her 2 saniyede bir FCC yeniden uygulanıyor" else "4G/FCC conflict risk — keepalive is running and re-applies FCC every 2s")
+                    }
                 } else {
-                    update { copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "4G uygulanamadı — 4G dongle bağlı mı?" else "4G apply failed — is the 4G dongle connected?") }
+                    update {
+                        copy(
+                            is4gBusy = false,
+                            fourGOutcome = FourGOutcome.WRITE_FAILED,
+                            fourGMessage = if (language == AppLanguage.TR) "En az bir frame Unix soketine yazılamadı. 4G dongle bağlı ve açık mı?" else "At least one frame could not be written to the Unix socket. Is the 4G dongle attached and powered?"
+                        )
+                    }
                     log(if (language == AppLanguage.TR) "4G aktivasyon başarısız — Unix soketinde en az bir frame yazılamadı" else "4G activation failed — at least one frame write failed on the Unix socket")
                 }
             } catch (e: Exception) {
                 log(if (language == AppLanguage.TR) "4G aktivasyon hatası: ${e.message}" else "4G activation error: ${e.message}")
-                update { copy(is4gBusy = false, fourGMessage = if (language == AppLanguage.TR) "4G hatası: ${e.message}" else "4G error: ${e.message}") }
+                update {
+                    copy(
+                        is4gBusy = false,
+                        fourGOutcome = FourGOutcome.ERROR,
+                        fourGMessage = if (language == AppLanguage.TR) "4G hatası: ${e.message}" else "4G error: ${e.message}"
+                    )
+                }
             } finally {
                 endHardwareOp()
             }
         }
     }
+
+    /**
+     * True when a background FCC re-apply can interfere with a 4G activation
+     * attempt. Pure so the UI can show the warning without duplicating logic.
+     */
+    fun is4gAtRiskFromKeepalive(): Boolean = _state.value.isKeepaliveRunning
 
     // --- LED ---
 
@@ -639,7 +802,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             return
         }
         val language = _state.value.language
-        update { copy(isLedBusy = true, ledStatus = if (language == AppLanguage.TR) { if (on) "LED'ler açılıyor..." else "LED'ler kapatılıyor..." } else { if (on) "Turning LEDs on..." else "Turning LEDs off..." }) }
+        update { copy(isLedBusy = true, ledTone = Tone.INFO, ledStatus = if (language == AppLanguage.TR) { if (on) "LED'ler açılıyor..." else "LED'ler kapatılıyor..." } else { if (on) "Turning LEDs on..." else "Turning LEDs off..." }) }
         log(if (language == AppLanguage.TR) { if (on) "LED'ler açılıyor..." else "LED'ler kapatılıyor..." } else { if (on) "Turning LEDs on..." else "Turning LEDs off..." })
 
         runOnIO {
@@ -673,15 +836,15 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
                 }
 
                 if (anySuccess) {
-                    update { copy(isLedBusy = false, ledStatus = if (on) "ON" else "OFF") }
+                    update { copy(isLedBusy = false, ledTone = Tone.SUCCESS, ledStatus = if (on) "ON" else "OFF") }
                     log(if (language == AppLanguage.TR) { if (on) "LED'ler açıldı" else "LED'ler kapatıldı" } else { if (on) "LEDs turned on" else "LEDs turned off" })
                 } else {
-                    update { copy(isLedBusy = false, ledStatus = if (language == AppLanguage.TR) "Başarısız — DJI Fly çalışıyor mu?" else "Failed — is DJI Fly running?") }
+                    update { copy(isLedBusy = false, ledTone = Tone.DANGER, ledStatus = if (language == AppLanguage.TR) "Başarısız — DJI Fly çalışıyor mu?" else "Failed — is DJI Fly running?") }
                     log(if (language == AppLanguage.TR) "LED komutu başarısız — DJI Fly açık ve hava aracı bağlı olmalı" else "LED command failed — make sure DJI Fly is running with aircraft connected")
                 }
             } catch (e: Exception) {
                 log(if (language == AppLanguage.TR) "LED hatası: ${e.message}" else "LED error: ${e.message}")
-                update { copy(isLedBusy = false, ledStatus = if (language == AppLanguage.TR) "Hata: ${e.message}" else "Error: ${e.message}") }
+                update { copy(isLedBusy = false, ledTone = Tone.DANGER, ledStatus = if (language == AppLanguage.TR) "Hata: ${e.message}" else "Error: ${e.message}") }
             }
         }
     }
@@ -708,8 +871,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
             }
             return
         }
-        if (!beginHardwareOp()) {
-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
+        if (!claimHardwareOp(label("Cihaz bilgisi", "Device info"))) {
             update {
                 copy(deviceInfo = if (language == AppLanguage.TR) "Kumanda meşgul. Birkaç saniye sonra tekrar dene." else "Controller is busy. Try again in a few seconds.")
             }
@@ -761,24 +923,17 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** User-facing re-scan of the aircraft serial. Active query first, then a longer passive listen. */
     fun probeSerial() {
-        if (!beginHardwareOp()) {
-            log(if (_state.value.language == AppLanguage.TR) "Donanım meşgul — mevcut işlemin bitmesini bekle." else "Hardware busy — please wait for the current operation to finish.")
-            return
-        }
+        if (!claimHardwareOp(label("Seri numarası taraması", "Serial scan"))) return
         val language = _state.value.language
-        log(if (language == AppLanguage.TR) "Hava aracı seri numarası aranıyor..." else "Probing for aircraft serial...")
+        update { copy(isProbingSerial = true) }
+        log(if (language == AppLanguage.TR) "Hava aracı seri numarası aranıyor..." else "Reading aircraft serial...")
         runOnIO {
             try {
-                val serial = transport.probeSerial(2000)
-                if (serial.isNotEmpty()) {
-                    update { copy(aircraftSerial = serial) }
-                    prefs.edit().putString("aircraft_serial", serial).apply()
-                    log(if (language == AppLanguage.TR) "Hava aracı seri no: $serial (önbelleğe alındı)" else "Aircraft serial: $serial (cached)")
-                } else {
-                    log(if (language == AppLanguage.TR) "Seri numarası algılanmadı — hava aracı açık mı?" else "No serial detected — is the aircraft powered on?")
-                }
+                detectAndCacheSerial()
             } finally {
+                update { copy(isProbingSerial = false) }
                 endHardwareOp()
             }
         }
@@ -1255,26 +1410,83 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         return false
     }
 
-    /** Returns the cached serial, or probes the controller if not yet known. Caches the result in SharedPreferences. */
+    /**
+     * Resolves the aircraft serial, in priority order.
+     *
+     * 1. A manually-entered serial — always wins, whatever its format.
+     * 2. The serial from this session or a previous one (SharedPreferences).
+     * 3. An *active* VersionInquiry query (fast, deterministic while linked).
+     * 4. A longer passive telemetry listen.
+     *
+     * Steps 3 and 4 matter more than they look. [DumlTransport.probeSerialActive]
+     * asks the aircraft directly, so it returns an answer whenever the RC link
+     * is up. [DumlTransport.probeSerial] only sniffs broadcast telemetry frames,
+     * so it returns nothing unless the aircraft happens to be transmitting the
+     * right bytes inside the window. A previous revision dropped the active
+     * query and shortened the passive window from 8s to 2s, which made 4G abort
+     * at its serial guard on a controller that was in fact connected — the app
+     * told the user to tap Connect while Connect was already done.
+     */
     private fun getOrProbeSerial(): String {
-        var serial = _state.value.aircraftSerial
-        if (serial.isEmpty()) {
-            // Fall back to a serial persisted in a previous session.
-            serial = prefs.getString("aircraft_serial", "").orEmpty()
-            if (serial.isNotEmpty()) {
-                update { copy(aircraftSerial = serial) }
-            }
+        val known = SerialResolution.pick(
+            manual = _state.value.manualSerial.ifEmpty { prefs.getString("manual_aircraft_sn", "").orEmpty() },
+            session = _state.value.aircraftSerial,
+            cached = prefs.getString("aircraft_serial", "").orEmpty()
+        )
+        if (known.isNotEmpty()) {
+            update { copy(aircraftSerial = known) }
+            return known
         }
+        return detectAndCacheSerial()
+    }
+
+    /**
+     * Runs the two-stage detection (active query, then passive listen) and
+     * caches a hit. Shared by [getOrProbeSerial] and the user-facing
+     * [probeSerial] action so both paths behave identically.
+     */
+    private fun detectAndCacheSerial(): String {
+        val tr = _state.value.language == AppLanguage.TR
+        log(if (tr) "Hava aracı seri numarası aranıyor..." else "Reading aircraft serial...")
+
+        var serial = transport.probeSerialActive(ACTIVE_QUERY_MS)
         if (serial.isEmpty()) {
-            log(if (_state.value.language == AppLanguage.TR) "Hava aracı seri numarası aranıyor..." else "Probing for aircraft serial...")
-            serial = transport.probeSerial(2000)
-            if (serial.isNotEmpty()) {
-                update { copy(aircraftSerial = serial) }
-                prefs.edit().putString("aircraft_serial", serial).apply()
-                log(if (_state.value.language == AppLanguage.TR) "Hava aracı seri no: $serial (önbelleğe alındı)" else "Aircraft serial: $serial (cached)")
-            }
+            log(
+                if (tr) "Seri sorgusuna yanıt yok — telemetri dinleniyor (en fazla ${PASSIVE_LISTEN_MS / 1000} sn)..."
+                else "No reply to the serial query — listening for telemetry (up to ${PASSIVE_LISTEN_MS / 1000}s)..."
+            )
+            serial = transport.probeSerial(PASSIVE_LISTEN_MS)
+        }
+
+        if (serial.isNotEmpty()) {
+            update { copy(aircraftSerial = serial) }
+            prefs.edit().putString("aircraft_serial", serial).apply()
+            log(if (tr) "Hava aracı seri no: $serial (önbelleğe alındı)" else "Aircraft serial: $serial (cached)")
+        } else {
+            log(
+                if (tr) "Seri numarası algılanmadı — canlı görüntü açıkken hava aracını aç ve link et, ya da seriyi elle gir."
+                else "No serial detected — power on and link the aircraft with the live view up, or enter it manually."
+            )
         }
         return serial
+    }
+
+    /**
+     * Stores a manually-entered aircraft serial. A manual serial takes priority
+     * over every detected value, so a controller that cannot be probed still
+     * has a working path to 4G activation.
+     */
+    fun setManualSerial(serial: String) {
+        val trimmed = serial.trim()
+        prefs.edit().putString("manual_aircraft_sn", trimmed).apply()
+        update { copy(manualSerial = trimmed, aircraftSerial = trimmed) }
+        log(
+            if (_state.value.language == AppLanguage.TR) {
+                if (trimmed.isEmpty()) "Elle girilen seri temizlendi" else "Elle girilen seri kaydedildi: $trimmed"
+            } else {
+                if (trimmed.isEmpty()) "Manual serial cleared" else "Manual serial saved: $trimmed"
+            }
+        )
     }
 
     /**
