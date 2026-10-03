@@ -52,4 +52,13 @@ class UpdateCheckerTest {
         assertTrue(release("1.5.5-dp.4").isNewerThan("1.5.5-dp.3"))
         assertFalse(release("1.5.5-dp.4").isNewerThan("1.5.5-dp.4"))
     }
+    @Test
+    fun `design release upgrades existing controller installations`() {
+        val published = release("1.5.5-dp.5")
+        listOf("1.5.3-dp.2", "1.5.3-dp.6", "1.5.4", "1.5.5", "1.5.5-dp.4").forEach { installed ->
+            assertTrue("$installed should be offered 1.5.5-dp.5", published.isNewerThan(installed))
+        }
+        assertFalse(published.isNewerThan("1.5.5-dp.5"))
+    }
+
 }

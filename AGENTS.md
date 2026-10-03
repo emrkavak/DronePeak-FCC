@@ -10,6 +10,14 @@ English available.
 All app code lives in `app/src/main/java/com/dronepeak/app/`. ~13 files, ~5.5k lines. There is no `src/main/kotlin`,
 no multi-module split, and no code generation.
 
+## Current design baseline
+
+The 2026-10-02 redesign intentionally restores FreeFCC hardware behavior at
+`597157bd52120dfeb9677f79a8ad46b6027ce8dc`, per the user's explicit request.
+Only DronePeak identity, language/presentation, and its APK/profile update adapters differ.
+Run `python3 tools/verify_upstream.py` to verify the pinned hardware baseline; see
+`DESIGN_REFRESH.md` for the accepted exceptions and local visual QA workflow.
+
 ## Commands
 
 ```bash
@@ -52,12 +60,12 @@ no multi-module split, and no code generation.
 `FccViewModel` (UI-triggered) and `FccKeepaliveService` (2-second re-apply loop) are separate Android components with
 no shared instance, so this singleton is their only coordination.
 
-- Any new hardware operation must call `claimHardwareOp(label)` / `endHardwareOp()` in a `finally`.
-- Never unlock on behalf of another operation — `end()` is a no-op when the caller does not hold it.
+- Any new hardware operation must successfully call `beginHardwareOp()` and call `endHardwareOp()` in a `finally`.
+- Never unlock on behalf of another operation: return immediately when acquisition fails; only the acquiring operation may call `end()`.
 - `setLed` is the deliberate exception: it targets port 40007 while keepalive targets 40009, so it does not take
   the lock. Its KDoc explains why. Preserve that reasoning if you touch it.
-- `claimHardwareOp` reports contention in `AppState.message`, which the status strip renders in place. There is no
-  second channel — a busy path that only calls `log()` is invisible on the page the user is looking at.
+- Upstream busy paths log contention. The Control page renders `isHardwareBusy` directly next to disabled controls,
+  so keepalive contention remains visible in place. Keep that visible reason when changing the UI.
 
 ### Protocol layer
 
@@ -73,24 +81,23 @@ no shared instance, so this singleton is their only coordination.
   unit-tested but **only called from `sendAndReceive`**, i.e. the device-info path. `sendOneFrame` and
   `sendOneFrameUnix` read ACKs and discard them, so "FCC mode enabled" means "every TCP write succeeded", never
   "the aircraft acknowledged". Do not let copy imply more than that.
-- 4G activation is **fire-and-forget by nature** — the socket never acknowledges. `FourGOutcome.WRITTEN` is
-  deliberately distinct from a success state. Never render it as confirmed.
+- 4G activation is **fire-and-forget by nature** — the socket never acknowledges. Upstream stores its write result
+  in `fourGMessage`; the panel renders it neutrally and keeps the aircraft-verification instruction. Never render it as confirmed.
 
 ### State and tone
 
 `AppState` is one flat data class behind a `MutableStateFlow`; the UI reads `viewModel.state` and mutates only via
 ViewModel functions.
 
-- **Never let the UI decide colour by matching user-facing text.** The app used to do `message.contains("failed")`
-  / `contains("başarısız")` / `contains("not")` and that silently mis-coloured real failures — `"4G error: …"` and
-  `"4G needs the aircraft connected…"` matched none of the keywords. Set `Tone` / `FourGOutcome` in the ViewModel,
-  where the outcome is known. `logToneColor` in `MainActivity.kt` is the one remaining exception and applies only to
-  the log tab.
+- **Never let the UI decide colour by matching user-facing text.** Upstream has no `Tone` / `FourGOutcome` field.
+  Operation and log prose are neutral; color comes only from explicit state such as `isConnected` and `isFccEnabled`.
+  `TextCatalog.operationMessage` translates upstream prose for display and does not classify outcomes.
 - `busyProgress` is shared by connect, FCC and 4G. It is not per-operation.
 
 ### i18n
 
-Every user-facing string goes through `TextCatalog.UiText`, with complete TR and EN tables. Adding a field to
+UI labels go through `TextCatalog.UiText`, with complete TR and EN tables. Upstream operation prose is kept
+unchanged in the hardware ViewModel and translated only for display by `TextCatalog.operationMessage`. Adding a field to
 `UiText` requires filling in **both** `tr` and `en` — the compiler enforces the constructor arity, so a missing
 table is a build error rather than a runtime blank. The only inline `if (language == AppLanguage.TR)` cases left are
 inside `FccViewModel`, where building the string needs the current language at call time.
@@ -99,15 +106,17 @@ inside `FccViewModel`, where building the string needs the current language at c
 
 `MainActivity.kt` is one file, four pager pages (Control / Info / Log / Update).
 
-- **Screen targets, in dp:** DJI RC 2 is a 5.5" 1080x1920 panel at ~400ppi ≈ **432x768dp**. RC Pro 2 / RC Plus 2 are
-  11" 2160x2560 ≈ **1130x1340dp**. `WidthClass` picks a bottom bar for compact and a navigation rail for expanded.
-  Compact is the binding constraint — everything on the Control page must stay reachable without scrolling.
+- **Screen targets:** RC 2 is a 5.5" 1920x1080 landscape panel; RC Pro 2 has a rotatable **7"** display (not 11").
+  Android density is vendor-configured: physical ppi is not a reliable dp conversion. Local QA covers 768x432dp,
+  432x768dp, 960x540dp and 540x960dp, plus a larger representative window. The root uses a rail from 600dp width;
+  Control uses two columns when its remaining width is at least 540dp. Short landscape windows use 560dp/460dp thresholds and one row of tools. All main controls stay reachable without scrolling;
+  secondary feedback can scroll in its own bounded area.
 - Design rules, applied deliberately: flat surfaces, 1dp hairline borders, one corner radius (12dp), **no gradients
   and no glow**, colour only ever spent on meaning, uppercase wide-tracked micro-labels, monospace for technical
   values, no emoji. Do not reintroduce translucent tinted containers or gradient-filled buttons.
-- A disabled control must say why. `hardwareBlockedReason` / `linkBlockedReason` / `fourGBlockedReason` return a
-  reason string or null, and it is rendered next to the control. Keepalive holds the lock for a few hundred
-  milliseconds every two seconds, so blocked controls are a common state, not an edge case.
+- A disabled control must say why. `Controls` and `AircraftPanel` render busy/link reasons directly from state.
+  Keepalive holds the lock for a few hundred milliseconds every two seconds, so blocked controls are a common state,
+  not an edge case. LED actions remain available during FCC contention because they target a separate port.
 - Minimum touch target 48dp; primary actions 56dp. The controller is held one-handed, often gloved.
 
 ## Testing constraints
@@ -163,8 +172,8 @@ doesn't work":
 
 | Behaviour | Where it lives now |
 | --- | --- |
-| Active serial query before the passive listen (`probeSerialActive` then `probeSerial`, 8s not 2s) | `FccViewModel.detectAndCacheSerial` |
-| Manual aircraft serial entry, highest priority in resolution | `InfoPage` → `ManualSerialBlock`, `setManualSerial` |
+| Active serial query before the passive listen (`probeSerialActive` then `probeSerial`, 8s not 2s) | `FccViewModel.probeSerial` + `getOrProbeSerial` |
+| Manual aircraft serial entry, highest priority in resolution | `InfoPage` → `ManualSerial`, `setManualSerial` |
 | `isProbingSerial` state so a scan can show progress | `AppState` |
 | `MODELS_WITH_4G` used for an advisory log line | `SerialResolution.modelHint` + `send4gActivationFrames` |
 

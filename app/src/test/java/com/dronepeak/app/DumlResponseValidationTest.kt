@@ -103,7 +103,7 @@ class DumlResponseValidationTest {
     }
 
     @Test
-    fun `any destination accepts the concrete responding device`() {
+    fun `upstream requires exact reversed routing even for any destination`() {
         val anyRequest = buildRawFrame(
             sender = 0x82, dst = 0x00, seq = 4321,
             cmdType = 0x20, cmdSet = 0x00, cmdId = 0x01,
@@ -115,10 +115,7 @@ class DumlResponseValidationTest {
             payload = byteArrayOf(1, 2, 3, 4)
         )
 
-        assertArrayEquals(
-            byteArrayOf(1, 2, 3, 4),
-            DumlBuilder.validateResponse(anyRequest, concreteResponse)
-        )
+        assertNull(DumlBuilder.validateResponse(anyRequest, concreteResponse))
     }
 
     @Test

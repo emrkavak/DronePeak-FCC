@@ -48,10 +48,10 @@ class SerialResolutionTest {
     }
 
     @Test
-    fun `blank manual entry does not shadow a detected serial`() {
-        // Clearing the manual field must not wipe a serial that detection found.
+    fun `nonempty manual entry takes precedence just as in upstream`() {
+        // setManualSerial trims whitespace before storage; this helper matches upstream non-empty checks.
         assertEquals(
-            "wa341",
+            "   ",
             SerialResolution.pick(manual = "   ", session = "wa341", cached = "wa341")
         )
     }
