@@ -515,10 +515,8 @@ private fun InfoPage(state: AppState, viewModel: ControllerActions) {
         ManualSerial(state, viewModel)
         CardShell(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                MicroLabel(ui.sourceAndSupport)
-                Note(ui.upstreamCredit)
-                LinkButton(ui.sourceGithub, "https://github.com/doesthings/FreeFCC", Icons.Filled.Code)
-                LinkButton(ui.supportFreeFcc, "https://ko-fi.com/freefcc", Icons.Filled.Coffee)
+                MicroLabel(ui.sourceAndLicense)
+                LinkButton(ui.sourceGithub, "https://github.com/emrkavak/DronePeak-FCC", Icons.Filled.Code)
                 Readout(ui.license, "AGPL-3.0")
             }
         }

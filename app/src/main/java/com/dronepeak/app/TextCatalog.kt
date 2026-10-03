@@ -140,11 +140,9 @@ data class UiText(
     val infoSubtitle: String,
     val logSubtitle: String,
     val updateSubtitle: String,
-    val sourceAndSupport: String,
+    val sourceAndLicense: String,
     val sourceGithub: String,
-    val supportFreeFcc: String,
     val license: String,
-    val upstreamCredit: String,
     val redownload: String,
     val browserUnavailable: String
 )
@@ -396,11 +394,9 @@ object TextCatalog {
         infoSubtitle = "Kumanda bilgileri ve hava aracı seri numarası.",
         logSubtitle = "Son işlemler · en yeni kayıt üstte.",
         updateSubtitle = "DronePeak uygulaması ve FreeFCC komut profilleri.",
-        sourceAndSupport = "Kaynak ve destek",
-        sourceGithub = "FreeFCC kaynak kodu",
-        supportFreeFcc = "FreeFCC’yi destekle",
+        sourceAndLicense = "Kaynak ve lisans",
+        sourceGithub = "DronePeak kaynak kodu",
         license = "Lisans",
-        upstreamCredit = "DronePeak arayüzü, FreeFCC’nin açık kaynak DUML işlevlerini kullanır.",
         redownload = "Yeniden indir",
         browserUnavailable = "Bu kumandada bağlantıyı açabilecek bir tarayıcı yok."
     )
@@ -533,11 +529,9 @@ object TextCatalog {
         infoSubtitle = "Controller details and aircraft serial number.",
         logSubtitle = "Recent operations · newest first.",
         updateSubtitle = "DronePeak application and FreeFCC command profiles.",
-        sourceAndSupport = "Source and support",
-        sourceGithub = "FreeFCC source code",
-        supportFreeFcc = "Support FreeFCC",
+        sourceAndLicense = "Source and license",
+        sourceGithub = "DronePeak source code",
         license = "License",
-        upstreamCredit = "The DronePeak interface uses FreeFCC’s open source DUML functionality.",
         redownload = "Download again",
         browserUnavailable = "No browser is available to open this link on the controller."
     )
