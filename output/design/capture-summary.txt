@@ -1,0 +1,21 @@
+rc2-disconnected-tr: 13 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-fcc-tr: 14 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-busy-tr: 14 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-applying-tr: 13 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-4g-tr: 13 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-4g_error-en: 13 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-fcc-en: 14 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-info-tr: 5 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-log-tr: 4 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-update-tr: 5 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-download-en: 5 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-install-tr: 5 clickable controls; 1080x1920 at 400dpi; rotation=1
+portrait-fcc-tr: 14 clickable controls; 1080x1920 at 400dpi; rotation=0
+portrait-4g-en: 13 clickable controls; 1080x1920 at 400dpi; rotation=0
+rcpro2-fcc-en: 14 clickable controls; 1080x1920 at 320dpi; rotation=1
+rcpro2-portrait-fcc-tr: 14 clickable controls; 1080x1920 at 320dpi; rotation=0
+rc2-large-text-fcc-tr: 14 clickable controls; 1080x1920 at 400dpi; rotation=1
+rc2-dense-fcc-tr: 14 clickable controls; 1080x1920 at 480dpi; rotation=1
+rc2-dense-busy-en: 14 clickable controls; 1080x1920 at 480dpi; rotation=1
+expanded-fcc-tr: 14 clickable controls; 2160x2560 at 320dpi; rotation=0
+PASS production language switch and Info/Log navigation; no hardware actions invoked

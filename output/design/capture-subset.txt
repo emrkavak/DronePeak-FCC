@@ -1,0 +1,2 @@
+rc2-dense-fcc-tr: 14 clickable controls; 1080x1920 at 480dpi; rotation=1
+rc2-dense-busy-en: 14 clickable controls; 1080x1920 at 480dpi; rotation=1

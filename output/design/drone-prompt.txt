@@ -1,0 +1,8 @@
+Mode: built-in imagegen; no CLI fallback.
+Final asset: app/src/main/res/drawable-nodpi/drone_hero.png
+
+Initial generation:
+Use case: product-mockup. Asset type: local Android controller dashboard hero, transparent cutout. Create one photorealistic premium compact folding camera quadcopter, unbranded and original, four arms extended with realistic two-blade propellers and a front gimbal camera. Three-quarter front view slightly from above, entire drone visible, wide balanced composition, centered, generous transparent padding. Matte light graphite and silver materials with carefully lit mechanical details so it reads clearly on a very dark graphite UI. Crisp professional studio product render, realistic construction. Truly transparent background with alpha, no floor, no cast shadow outside the subject, no landscape, no text, no logos, no watermark, no glow, no light trails. This is decorative and must not identify a specific connected aircraft model.
+
+Final edit:
+Use case: background-extraction. Precisely cut out the drone from this image. Keep the entire original drone and all thin propellers, its shape, materials, lighting and viewpoint unchanged. Remove ALL gray haze, vignette, smoky glow, gradient, black backdrop, and shadows between and behind the arms. Every pixel outside the actual drone silhouette must have zero alpha. True transparent PNG isolated product cutout only. Do not add a floor, background or light effect.
