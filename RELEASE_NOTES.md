@@ -1,13 +1,17 @@
-## DronePeak 1.5.5-dp.7
+## DronePeak 1.5.5-dp.8
 
-### Aktivasyon
-Bu sürümü kullanmak için güncellemeden sonra ilk açılışta DronePeak yetkilisinden güncel 6 haneli Authenticator kodunu isteyin. Kod 30 saniyede yenilenir; kumandanın tarih ve saati doğru olmalıdır. Aktivasyon bir kez tamamlandıktan sonra bu sürüm internet olmadan kullanılabilir. Yeni sürümler yeniden aktivasyon isteyecektir.
+### Otomatik yuvarlak kısayol
+APK’yı yükleyip kurulumdan sonra bir kez **Aç** düğmesine dokunun. Gerekirse DronePeak içinden diğer uygulamaların üzerinde gösterme iznini verin. Yardımcı launcher olmadan yüzen ikona erişebilirsiniz; kumanda sonraki açılışlarda kısayolu otomatik başlatır.
 
-### Yüzen kısayol
-Kontrol ekranının sağ üstündeki kısayol düğmesinden yüzen ikonu etkinleştirebilirsiniz. Diğer uygulamaların üzerinde gösterme izni gerekir. İkonu istediğiniz yere taşıyın; dört kenardan birine bırakarak küçük, silik bir oka dönüştürün. Oka dokunmak ikonu çıkarır, ikona dokunmak Kontrol ekranını açar. Kısayolu kapatmak FCC keepalive servisini durdurmaz.
+İkon yuvarlak oldu. Dört kenara gizlendiğinde ok daha belirgin görünür. Konum ve kenar durumu korunur. İkon aktivasyondan önce de görünür ve kod ekranını açar; donanım işlemleri aktivasyon gerektirir.
 
-Mevcut uygulamanın üzerine APK’yı yükleyin. Kumanda yeniden başlatıldıktan sonra yüzen kısayol için DronePeak’i açın.
+### İkonu kapatma
+Kapatmadan önce uyarı ve onay gösterilir. Kapatılan ikon normal uygulama açılışında veya kumanda reboot’unda geri gelmez. Yeniden göstermek için aynı imzalı APK’yı tekrar yükleyip **Aç** düğmesine dokunun; uygulamayı kaldırmanız gerekmez. Kısayolu kapatmak FCC keepalive’ı durdurmaz.
 
-Sürüm: 1.5.5-dp.7 • Android versionCode: 36.
+### Aktivasyon tasarımı
+Logo, sürüm bilgisi ve altı kutulu kod girişi eklendi. Kutular tek alan gibi çalışır: yapıştırma, silme, baştaki sıfırlar ve ekran dönüşü desteklenir. TR/EN düzenleri yatay ve dikey kumanda ekranlarına uyarlanır. Bu yeni sürümü açmak için DronePeak yetkilisinden güncel 6 haneli Authenticator kodunu isteyin; kod 30 saniyede yenilenir.
 
-Debug/release derlemeleri ve 39 birim testi doğrulandı. Yüzen kısayol yerel emülatörde test edildi; gerçek RC 2/RC Pro 2 ve DJI Fly uyumluluğu henüz doğrulanmadı.
+### CE durumu
+Bu sürüm FCC/CE protokolünü değiştirmez. Air 3S’te yeniden başlatmadan CE dönüşü araştırması devam ediyor; bu yayında CE sorununun düzeldiği iddia edilmiyor.
+
+Sürüm: **1.5.5-dp.8** · versionCode: **37**. Normal Android izinleri ve DJI yazılımının arka plan kısıtlamaları geçerlidir; Android’den zorla durdurulan uygulamanın yeniden açılması gerekir.

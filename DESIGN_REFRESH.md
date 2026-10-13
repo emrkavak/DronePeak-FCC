@@ -86,3 +86,9 @@ The Control header has a 48dp shortcut settings button. Its switch requests Andr
 Local QA artifacts live in ignored `output/shortcut/`. Test Android overlay permission grant/revocation, all four edges, rotation, notification stop, page routing, and app restart before checking on actual RC 2/RC Pro 2 firmware. JVM geometry tests do not establish DJI compatibility.
 
 Validation: debug/release builds and 39 JVM tests passed. Full debug lint: 0 errors, 19 warnings. Android 36.1 local emulator checks passed for permission navigation, all four dock edges/reveal, existing Activity Control routing, rotation, toggle disable, permission revocation stopping the service and restoring the enabled preference on app reopen. Real DJI controller/firmware checks remain outstanding.
+
+## 1.5.5-dp.8 shortcut and activation refresh
+
+Shortcut navigation defaults on, including before activation. A dedicated BOOT_COMPLETED/MY_PACKAGE_REPLACED receiver starts only the overlay, without modifying the hardware BootReceiver or keepalive. First installation requires opening the app once and granting overlay permission if necessary. A confirmed close stores PackageInfo.lastUpdateTime; reinstall/update changes that timestamp and restores default-on behavior. The .7 enabled flag is intentionally superseded. Notifications route close requests to an Activity confirmation, never silently close. The icon is circular at 32dp with a 48dp target; edge arrows are 14dp at 60% opacity with a thin contrast outline.
+
+Activation now uses a responsive flat card and one accessible field decorated as six cells. Paste, deletion, leading zeroes, rotation and language changes share one saved value. Hardware authorization and all existing FCC/CE frames remain unchanged; the Air 3S CE investigation is deferred.

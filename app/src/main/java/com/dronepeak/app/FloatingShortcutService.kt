@@ -39,8 +39,8 @@ class FloatingShortcutService : Service() {
         val notificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.createNotificationChannel(NotificationChannel("floating_shortcut", ui().shortcutTitle,
             NotificationManager.IMPORTANCE_LOW).apply { setSound(null, null) })
-        val stop = PendingIntent.getService(this, 9020,
-            Intent(this, FloatingShortcutService::class.java).setAction("stop"),
+        val stop = PendingIntent.getActivity(this, 9020,
+            controlIntent().putExtra("close_shortcut", true),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val open = PendingIntent.getActivity(this, 9021, controlIntent(),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -55,14 +55,8 @@ class FloatingShortcutService : Service() {
 
     @SuppressLint("RtlHardcoded") // Coordinates are physical screen edges, independent of text direction.
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "stop") {
-            prefs.edit().putBoolean("enabled", false).apply()
-            stopSelf()
-            return START_NOT_STICKY
-        }
-        if (!prefs.getBoolean("enabled", false) || !ActivationManager.isActivated(this) || !Settings.canDrawOverlays(this)) {
-            if (!ActivationManager.isActivated(this)) FloatingShortcutController.failed(ShortcutIssue.ACTIVATION)
-            else if (!Settings.canDrawOverlays(this)) FloatingShortcutController.failed(ShortcutIssue.PERMISSION)
+        if (!FloatingShortcutController.wanted(this) || !Settings.canDrawOverlays(this)) {
+            if (!Settings.canDrawOverlays(this)) FloatingShortcutController.failed(this, ShortcutIssue.PERMISSION)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -90,8 +84,8 @@ class FloatingShortcutService : Service() {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
     internal fun refreshVisibility() {
-        if (!Settings.canDrawOverlays(this) || !ActivationManager.isActivated(this)) {
-            FloatingShortcutController.failed(if (!Settings.canDrawOverlays(this)) ShortcutIssue.PERMISSION else ShortcutIssue.ACTIVATION)
+        if (!Settings.canDrawOverlays(this) || !FloatingShortcutController.wanted(this)) {
+            if (!Settings.canDrawOverlays(this)) FloatingShortcutController.failed(this, ShortcutIssue.PERMISSION)
             stopSelf()
             return
         }
@@ -102,7 +96,7 @@ class FloatingShortcutService : Service() {
             updateBounds()
             updateCoordinates()
             runCatching { manager.addView(view, params); attached = true }.onFailure {
-                FloatingShortcutController.failed()
+                FloatingShortcutController.failed(this@FloatingShortcutService)
                 stopSelf()
             }
         }
@@ -137,7 +131,7 @@ class FloatingShortcutService : Service() {
         bubble?.contentDescription = if (position.edge == ShortcutEdge.NONE) ui().shortcutOpen else ui().shortcutReveal
         bubble?.invalidate()
         if (attached) runCatching { manager.updateViewLayout(bubble, params) }.onFailure {
-            FloatingShortcutController.failed(); stopSelf()
+            FloatingShortcutController.failed(this@FloatingShortcutService); stopSelf()
         }
     }
     private fun savePosition() {
@@ -162,6 +156,7 @@ class FloatingShortcutService : Service() {
         private val icon = getDrawable(R.drawable.dronepeak_icon)!!
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private val arrow = Path()
+        private val roundClip = Path()
         private var downX = 0f
         private var downY = 0f
         private var originalX = 0f
@@ -179,8 +174,13 @@ class FloatingShortcutService : Service() {
             super.onDraw(canvas)
             if (position.edge == ShortcutEdge.NONE) {
                 val inset = dp(8)
+                roundClip.reset()
+                roundClip.addCircle(width / 2f, height / 2f, dp(16).toFloat(), Path.Direction.CW)
+                canvas.save()
+                canvas.clipPath(roundClip)
                 icon.setBounds(inset, inset, width - inset, height - inset)
                 icon.draw(canvas)
+                canvas.restore()
             } else {
                 canvas.save()
                 canvas.translate(width / 2f, height / 2f)
@@ -190,15 +190,20 @@ class FloatingShortcutService : Service() {
                     ShortcutEdge.TOP -> 90f
                     else -> 270f
                 })
-                paint.color = Color.argb(89, 242, 245, 246)
+                paint.color = Color.argb(153, 242, 245, 246)
                 paint.style = Paint.Style.STROKE
                 paint.strokeWidth = density * 2
                 paint.strokeCap = Paint.Cap.ROUND
-                val half = dp(6).toFloat()
+                val half = 7f * density
                 arrow.reset()
                 arrow.moveTo(-half / 2, -half)
                 arrow.lineTo(half / 2, 0f)
                 arrow.lineTo(-half / 2, half)
+                paint.color = Color.argb(153, 16, 19, 21)
+                paint.strokeWidth = density * 3
+                canvas.drawPath(arrow, paint)
+                paint.color = Color.argb(153, 242, 245, 246)
+                paint.strokeWidth = density * 2
                 canvas.drawPath(arrow, paint)
                 canvas.restore()
             }
@@ -236,7 +241,7 @@ class FloatingShortcutService : Service() {
             if (position.edge != ShortcutEdge.NONE) {
                 position = ShortcutGeometry.reveal(position, maxX, maxY, dp(32).toFloat())
                 updateCoordinates(); savePosition()
-            } else runCatching { startActivity(controlIntent()) }.onFailure { FloatingShortcutController.failed() }
+            } else runCatching { startActivity(controlIntent()) }.onFailure { FloatingShortcutController.failed(this@FloatingShortcutService) }
             return true
         }
     }

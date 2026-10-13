@@ -198,6 +198,8 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         log(if (language == AppLanguage.TR) "Dil Türkçe olarak ayarlandı" else "Language set to English")
     }
 
+    fun clearActivationError() { update { copy(activationFailed = false) } }
+
     fun activate(code: String) {
         val accepted = ActivationManager.activate(app, code)
         update { copy(isActivated = accepted, activationFailed = !accepted) }
