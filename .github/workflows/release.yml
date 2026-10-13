@@ -81,6 +81,7 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: DronePeak ${{ github.event.inputs.tag || github.ref_name }}
           files: release/*.apk
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
           overwrite_files: true
           fail_on_unmatched_files: true
