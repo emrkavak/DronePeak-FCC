@@ -26,6 +26,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -137,9 +138,12 @@ internal fun ActivationScreen(state: AppState, activate: (String) -> Unit, clear
             }
         }
     }
+    // Keyboard insets shrink the available height, but must not change the layout branch:
+    // replacing that branch disposes the focused text field and closes its input connection.
+    val configuration = LocalConfiguration.current
     BoxWithConstraints(Modifier.fillMaxSize().background(background)
         .windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(16.dp)) {
-        val wide = maxWidth >= 600.dp && maxWidth > maxHeight && maxHeight >= 260.dp
+        val wide = maxWidth >= 600.dp && configuration.screenWidthDp > configuration.screenHeightDp
         Column(Modifier.fillMaxSize().verticalScroll(scrollState),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (wide) {
