@@ -40,6 +40,7 @@ class FccKeepaliveService : Service() {
         private const val PREF_KEEPALIVE = "keepalive_running"
 
         fun start(context: Context) {
+            if (!ActivationManager.isActivated(context)) return
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putBoolean(PREF_KEEPALIVE, true).apply()
             val intent = Intent(context, FccKeepaliveService::class.java).apply {
@@ -100,6 +101,12 @@ class FccKeepaliveService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
+                if (!ActivationManager.isActivated(this)) {
+                    keepaliveJob?.cancel()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
                 // ACTION_START or a null-intent sticky restart.
                 // Respect the persistent flag so a system-kill-and-restart
                 // doesn't silently re-enable keepalive after the user stopped it.
@@ -136,6 +143,11 @@ class FccKeepaliveService : Service() {
                 // ~1-2s. With the retry, FCC is re-applied within ~200ms
                 // of the lock being released, instead of up to INTERVAL_MS
                 // later.
+                if (!ActivationManager.isActivated(this@FccKeepaliveService)) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                    return@launch
+                }
                 var sent = false
                 for (retry in 0 until 10) {
                     if (HardwareLock.tryBegin()) {

@@ -21,7 +21,7 @@ class BootReceiver : BroadcastReceiver() {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
 
         val prefs = context.getSharedPreferences("dronepeak", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("auto_fcc", false)) {
+        if (ActivationManager.isActivated(context) && prefs.getBoolean("auto_fcc", false)) {
             FccKeepaliveService.start(context)
         }
     }

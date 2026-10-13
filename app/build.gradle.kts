@@ -6,6 +6,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Production builds never fall back to the public debug test key.
+val activationFile = rootProject.file("activation.properties")
+val activationProps = Properties().apply {
+    if (activationFile.exists()) activationFile.inputStream().use { load(it) }
+}
+val activationSecret = providers.environmentVariable("DRONEPEAK_ACTIVATION_SECRET")
+    .orElse(activationProps.getProperty("secret", "")).get()
+require(activationSecret.isEmpty() || activationSecret.matches(Regex("[A-Z2-7]{32}"))) {
+    "Activation secret must be a 32-character Base32 key."
+}
+
 android {
     namespace = "com.dronepeak.app"
     compileSdk = 35
@@ -14,11 +25,11 @@ android {
         applicationId = "com.dronepeak.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 35
-        versionName = "1.5.5-dp.6"
+        versionCode = 36
+        versionName = "1.5.5-dp.7"
         val dronePeakRepo = providers.gradleProperty("dronePeakRepo")
             .orElse(providers.environmentVariable("DRONEPEAK_REPO"))
-            .orElse("YOUR_GITHUB_USERNAME/DronePeak")
+            .orElse("emrkavak/DronePeak-FCC")
         buildConfigField("String", "DRONEPEAK_REPO", "\"${dronePeakRepo.get()}\"")
     }
 
@@ -57,7 +68,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "ACTIVATION_SECRET", "\"${activationSecret.ifEmpty { "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" }}\"")
+        }
         release {
+            buildConfigField("String", "ACTIVATION_SECRET", "\"$activationSecret\"")
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(
@@ -99,4 +114,13 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
 
     testImplementation("junit:junit:4.13.2")
+}
+
+// Check task execution rather than task names: aggregate assemble/build tasks also include release.
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    doFirst {
+        require(activationSecret.isNotEmpty()) {
+            "Release requires DRONEPEAK_ACTIVATION_SECRET or activation.properties."
+        }
+    }
 }

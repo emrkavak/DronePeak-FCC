@@ -34,6 +34,8 @@ enum class UpdateStage {
 
 /** Immutable upstream UI state, extended only for language and the DronePeak updater. */
 data class AppState(
+    val isActivated: Boolean = false,
+    val activationFailed: Boolean = false,
     val language: AppLanguage = AppLanguage.TR,
     val status: String = "idle",
     val message: String = "",
@@ -196,7 +198,19 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
         log(if (language == AppLanguage.TR) "Dil Türkçe olarak ayarlandı" else "Language set to English")
     }
 
+    fun activate(code: String) {
+        val accepted = ActivationManager.activate(app, code)
+        update { copy(isActivated = accepted, activationFailed = !accepted) }
+        if (accepted) init()
+    }
+
     fun init() {
+        val activated = ActivationManager.isActivated(app)
+        update { copy(isActivated = activated) }
+        if (!activated) {
+            prefs.edit().putBoolean("keepalive_running", false).apply()
+            return
+        }
         val model = try { Build.DEVICE } catch (_: Exception) { "unknown" }
         val autoEnabled = prefs.getBoolean("auto_fcc", false)
         // Sync the keepalive toggle with the persistent flag so the UI is
@@ -226,6 +240,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * The setting is saved to SharedPreferences and persists across restarts.
      */
     fun toggleAutoFcc() {
+        if (!ActivationManager.isActivated(app)) return
         val newValue = !_state.value.autoFcc
         prefs.edit().putBoolean("auto_fcc", newValue).apply()
         update { copy(autoFcc = newValue) }
@@ -238,6 +253,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * service, and launches DJI Fly.
      */
     private fun autoConnectAndApply() {
+        if (!ActivationManager.isActivated(app)) return
         if (!beginHardwareOp()) {
             log("Auto-FCC skipped — another hardware operation is already running")
             return
@@ -340,6 +356,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * Probes for the aircraft serial number after connecting.
      */
     fun connect() {
+        if (!ActivationManager.isActivated(app)) return
         if (!beginHardwareOp()) {
             log("Hardware busy — please wait for the current operation to finish.")
             return
@@ -391,6 +408,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * The profile already runs 2 rounds internally for reliability.
      */
     fun enableFcc() {
+        if (!ActivationManager.isActivated(app)) return
         if (!beginHardwareOp()) {
             log("Hardware busy — please wait for the current operation to finish.")
             return
@@ -446,6 +464,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
 
     /** Sends the CE restore command: a single frame that resets to factory region. */
     fun disableFcc() {
+        if (!ActivationManager.isActivated(app)) return
         if (!beginHardwareOp()) {
             log("Hardware busy — please wait for the current operation to finish.")
             return
@@ -492,6 +511,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * lifecycle so it keeps working when the user switches to DJI Fly.
      */
     fun startKeepalive() {
+        if (!ActivationManager.isActivated(app)) return
         if (_state.value.isKeepaliveRunning) {
             log("Keepalive already running")
             return
@@ -516,6 +536,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * background while DJI Fly runs.
      */
     fun launchDjiFly() {
+        if (!ActivationManager.isActivated(app)) return
         val pm = app.packageManager
         // Try the standard launch intent first
         var intent = pm.getLaunchIntentForPackage("dji.go.v5")
@@ -585,6 +606,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      *    dongle is attached, we proceed regardless of model.
      */
     fun send4gActivationFrames() {
+        if (!ActivationManager.isActivated(app)) return
         if (!beginHardwareOp()) {
             log("Hardware busy — please wait for the current operation to finish.")
             return
@@ -678,6 +700,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * @param on true for LED ON, false for LED OFF
      */
     fun setLed(on: Boolean) {
+        if (!ActivationManager.isActivated(app)) return
         if (_state.value.isLedBusy) {
             log("LED busy — please wait.")
             return
@@ -737,6 +760,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
      * (cmd_set=0, cmd_id=1). Uses sendAndReceive to capture the response.
      */
     fun queryDeviceInfo() {
+        if (!ActivationManager.isActivated(app)) return
         if (!isControllerReachable()) return
         if (!beginHardwareOp()) {
             log("Hardware busy — please wait for the current operation to finish.")
@@ -777,6 +801,7 @@ class FccViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun probeSerial() {
+        if (!ActivationManager.isActivated(app)) return
         if (!beginHardwareOp()) {
             log("Hardware busy — please wait for the current operation to finish.")
             return

@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -63,22 +64,43 @@ private val Radius = RoundedCornerShape(12.dp)
 
 class MainActivity : ComponentActivity() {
     private val viewModel: FccViewModel by viewModels()
+    private var controlRequest by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        consumeControlIntent(intent)
         viewModel.init()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.rgb(16, 19, 21)),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.rgb(16, 19, 21))
         )
         setContent {
-            DronePeakTheme { AppRoot(viewModel) }
+            DronePeakTheme { AppRoot(viewModel, controlRequest) }
         }
     }
 
     override fun onResume() {
         super.onResume()
         viewModel.onAppResumed()
+        FloatingShortcutController.visible(this, true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        FloatingShortcutController.visible(this, false)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeControlIntent(intent)
+    }
+
+    private fun consumeControlIntent(intent: Intent) {
+        if (intent.getBooleanExtra("open_control", false)) {
+            controlRequest++
+            intent.removeExtra("open_control")
+        }
     }
 }
 
@@ -122,19 +144,61 @@ internal class ControllerActions(private val delegate: FccViewModel?) {
  * The screen never assumes a controller's Android density from its pixel count.
  */
 @Composable
-private fun AppRoot(viewModel: FccViewModel) {
+private fun AppRoot(viewModel: FccViewModel, controlRequest: Int) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val actions = remember(viewModel) { ControllerActions(viewModel) }
-    ControllerDashboard(state, actions)
+    if (!state.isActivated) {
+        ActivationScreen(state, viewModel)
+    } else {
+        LaunchedEffect(state.isActivated) {
+            FloatingShortcutController.ensureStarted(viewModel.getApplication())
+        }
+        ControllerDashboard(state, actions, controlRequest = controlRequest)
+    }
+}
+
+/** The dashboard is never composed until this installed version has been approved. */
+@Composable
+private fun ActivationScreen(state: AppState, viewModel: FccViewModel) {
+    val ui = TextCatalog.ui(state.language)
+    val context = LocalContext.current
+    var code by rememberSaveable { mutableStateOf("") }
+    androidx.activity.compose.BackHandler { (context as? android.app.Activity)?.finish() }
+    Box(Modifier.fillMaxSize().background(Graphite).windowInsetsPadding(WindowInsets.safeDrawing),
+        contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 480.dp).padding(16.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("DronePeak · ${BuildConfig.VERSION_NAME}", color = Ink)
+            Row {
+                AppLanguage.entries.forEach { language ->
+                    TextButton(onClick = { viewModel.setLanguage(language) }) { Text(language.shortName) }
+                }
+            }
+            Text(ui.activationTitle, style = MaterialTheme.typography.headlineSmall)
+            Text(ui.activationHint, color = Muted)
+            OutlinedTextField(value = code, onValueChange = { value ->
+                code = value.filter { it in '0'..'9' }.take(6)
+            }, label = { Text(ui.activationCode) }, singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
+                modifier = Modifier.fillMaxWidth(), shape = Radius)
+            if (state.activationFailed) Text(ui.activationError, color = Danger)
+            Button(onClick = { viewModel.activate(code); code = "" }, enabled = code.length == 6,
+                modifier = Modifier.fillMaxWidth().height(56.dp), shape = Radius) { Text(ui.activate) }
+            TextButton(onClick = { (context as? android.app.Activity)?.finish() },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(ui.exit) }
+        }
+    }
 }
 
 @Composable
-internal fun ControllerDashboard(state: AppState, viewModel: ControllerActions, initialPage: Int = 0) {
+internal fun ControllerDashboard(state: AppState, viewModel: ControllerActions, initialPage: Int = 0, controlRequest: Int = 0) {
     val ui = TextCatalog.ui(state.language)
     val pager = rememberPagerState(initialPage = initialPage) { 4 }
     val scope = rememberCoroutineScope()
+    LaunchedEffect(controlRequest) { if (controlRequest > 0) pager.scrollToPage(0) }
     Column(Modifier.fillMaxSize().background(Graphite).windowInsetsPadding(WindowInsets.safeDrawing)) {
-        Header(state, viewModel)
+        Header(state, viewModel, pager.currentPage == 0)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val rail = maxWidth >= 600.dp || (maxWidth >= 560.dp && maxWidth > maxHeight)
             val select: (Int) -> Unit = { scope.launch { pager.animateScrollToPage(it) } }
@@ -164,7 +228,7 @@ internal fun ControllerDashboard(state: AppState, viewModel: ControllerActions, 
 }
 
 @Composable
-private fun Header(state: AppState, viewModel: ControllerActions) {
+private fun Header(state: AppState, viewModel: ControllerActions, showShortcut: Boolean) {
     val ui = TextCatalog.ui(state.language)
     Row(
         Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp),
@@ -177,6 +241,7 @@ private fun Header(state: AppState, viewModel: ControllerActions) {
         Text(state.controllerModel.ifEmpty { ui.rcPanel }, color = Muted,
             fontFamily = FontFamily.Monospace, fontSize = 11.sp,
             maxLines = 1, modifier = Modifier.weight(0.7f), overflow = TextOverflow.Ellipsis)
+        if (showShortcut) ShortcutSettings(ui)
         TextButton(onClick = {
             viewModel.setLanguage(if (state.language == AppLanguage.TR) AppLanguage.EN else AppLanguage.TR)
         }, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = ui.language }) {
@@ -186,6 +251,45 @@ private fun Header(state: AppState, viewModel: ControllerActions) {
         }
     }
     HorizontalDivider(color = Line, thickness = 1.dp)
+}
+
+/** Keep the optional shortcut setting out of the fixed-height hardware action panels. */
+@Composable
+private fun ShortcutSettings(ui: UiText) {
+    val context = LocalContext.current
+    val shortcut by FloatingShortcutController.state.collectAsStateWithLifecycle()
+    var open by remember { mutableStateOf(false) }
+    IconButton(onClick = { open = true }, modifier = Modifier.size(48.dp)) {
+        Icon(Icons.AutoMirrored.Filled.OpenInNew, ui.shortcutTitle, Modifier.size(20.dp),
+            tint = if (shortcut.enabled) Link else Muted)
+    }
+    if (open) AlertDialog(onDismissRequest = { open = false }, shape = Radius,
+        title = { Text(ui.shortcutTitle) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(ui.shortcutDetail)
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(ui.shortcutTitle, modifier = Modifier.weight(1f))
+                    Switch(checked = shortcut.enabled, onCheckedChange = {
+                        FloatingShortcutController.setEnabled(context, it)
+                    }, modifier = Modifier.semantics { contentDescription = ui.shortcutTitle })
+                }
+                val reason = when (shortcut.issue) {
+                    ShortcutIssue.PERMISSION -> ui.shortcutPermission
+                    ShortcutIssue.UNAVAILABLE -> ui.shortcutUnavailable
+                    ShortcutIssue.ACTIVATION -> ui.activationTitle
+                    else -> null
+                }
+                reason?.let { Text(it, color = Muted) }
+                if (shortcut.issue != ShortcutIssue.NONE) TextButton(onClick = {
+                    FloatingShortcutController.setEnabled(context, true)
+                }) { Text(ui.retry) }
+                // Permission requests keep a saved intent to enable; users can cancel that intent too.
+                if (!shortcut.enabled && shortcut.issue != ShortcutIssue.NONE) TextButton(onClick = {
+                    FloatingShortcutController.setEnabled(context, false)
+                }) { Text(ui.shortcutStop) }
+            }
+        }, confirmButton = { TextButton(onClick = { open = false }) { Text(ui.shortcutClose) } })
 }
 
 @Composable

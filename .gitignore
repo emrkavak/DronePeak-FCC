@@ -20,3 +20,8 @@ keystore.properties
 *.jks
 *.keystore
 
+
+activation.properties
+activation-setup.txt
+
+output/shortcut/

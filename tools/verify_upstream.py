@@ -51,9 +51,37 @@ def method(source, name):
     raise ValueError(f"Unclosed method: {name}")
 
 
+def strip_activation(name, source):
+    # Accepted activation adapter only; all hardware bodies remain compared verbatim.
+    if name == "BootReceiver.kt":
+        return source.replace("ActivationManager.isActivated(context) && ", "")
+    if name == "FccViewModel.kt":
+        source = source.replace("        if (!ActivationManager.isActivated(app)) return\n", "")
+        source = source.replace("        val activated = ActivationManager.isActivated(app)\n"
+                                "        update { copy(isActivated = activated) }\n"
+                                "        if (!activated) {\n"
+                                '            prefs.edit().putBoolean("keepalive_running", false).apply()\n'
+                                "            return\n"
+                                "        }\n", "")
+    if name == "FccKeepaliveService.kt":
+        source = source.replace("            if (!ActivationManager.isActivated(context)) return\n", "")
+        source = source.replace("                if (!ActivationManager.isActivated(this)) {\n"
+                                "                    keepaliveJob?.cancel()\n"
+                                "                    stopForeground(STOP_FOREGROUND_REMOVE)\n"
+                                "                    stopSelf()\n"
+                                "                    return START_NOT_STICKY\n"
+                                "                }\n", "")
+        source = source.replace("                if (!ActivationManager.isActivated(this@FccKeepaliveService)) {\n"
+                                "                    stopForeground(STOP_FOREGROUND_REMOVE)\n"
+                                "                    stopSelf()\n"
+                                "                    return@launch\n"
+                                "                }\n", "")
+    return source
+
+
 for name in ("DumlTransport.kt", "HardwareLock.kt", "BootReceiver.kt", "FccKeepaliveService.kt"):
     expected = upstream(f"app/src/main/java/com/freefcc/app/{name}")
-    actual = (APP / name).read_text()
+    actual = strip_activation(name, (APP / name).read_text())
     if name in ("BootReceiver.kt", "FccKeepaliveService.kt"):
         expected = expected.replace('"freefcc"', '"dronepeak"')
     if name == "FccKeepaliveService.kt":
@@ -86,7 +114,7 @@ actual = actual[:start] + actual[end:]
 check("Profiles.kt (update storage adapter excluded)", expected, actual)
 
 expected = upstream("app/src/main/java/com/freefcc/app/FccViewModel.kt")
-actual = (APP / "FccViewModel.kt").read_text()
+actual = strip_activation("FccViewModel.kt", (APP / "FccViewModel.kt").read_text())
 for declaration in (r'private val MODELS_WITH_4G = setOf\([^\n]+',
                     r'private val transport = DumlTransport\(\)',
                     r'private val _state = MutableStateFlow\(AppState\(\)\)'):
