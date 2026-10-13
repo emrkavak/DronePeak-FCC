@@ -74,3 +74,15 @@ RC2 üzerinden mevcut kurulumun güncellenmesi için yayın sürümü `1.5.5-dp.
 Final bitmap: [drone_hero.png](app/src/main/res/drawable-nodpi/drone_hero.png), 1536×1024, alpha kanallı.
 Üretim: yerleşik `imagegen` aracı; CLI veya harici görsel bağlantısı kullanılmadı.
 Tam üretim ve şeffaflaştırma promptları [drone-prompt.txt](output/design/drone-prompt.txt) dosyasındadır.
+
+## Authenticator activation adapter
+
+Version activation gates ViewModel entry points, boot startup and keepalive service startup/ticks. These checks are accepted adapters; DUML frame contents, transport, lock ownership and timing remain pinned. `tools/verify_upstream.py` strips only the exact activation checks before comparing hardware bodies. See ACTIVATION.md for setup and limitations.
+
+## Floating shortcut
+
+The Control header has a 48dp shortcut settings button. Its switch requests Android display-over-other-apps permission. The independent specialUse foreground service renders a 32dp app icon in a 48dp window; dragging within 24dp of any safe screen edge docks it into a 12dp inward-facing arrow at 35% opacity. Arrow taps reveal, icon taps reopen Control. The window is hidden while MainActivity is visible. Normalized position/edge and user preference persist; no BootReceiver hook is added. Stopping the shortcut never changes FCC keepalive.
+
+Local QA artifacts live in ignored `output/shortcut/`. Test Android overlay permission grant/revocation, all four edges, rotation, notification stop, page routing, and app restart before checking on actual RC 2/RC Pro 2 firmware. JVM geometry tests do not establish DJI compatibility.
+
+Validation: debug/release builds and 39 JVM tests passed. Full debug lint: 0 errors, 19 warnings. Android 36.1 local emulator checks passed for permission navigation, all four dock edges/reveal, existing Activity Control routing, rotation, toggle disable, permission revocation stopping the service and restoring the enabled preference on app reopen. Real DJI controller/firmware checks remain outstanding.

@@ -11,6 +11,7 @@ permissions:
   contents: read
 
 env:
+  DRONEPEAK_ACTIVATION_SECRET: ${{ secrets.DRONEPEAK_ACTIVATION_SECRET }}
   DRONEPEAK_REPO: ${{ github.repository }}
 
 jobs:

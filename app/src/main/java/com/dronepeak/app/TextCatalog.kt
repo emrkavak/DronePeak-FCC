@@ -11,6 +11,20 @@ enum class AppLanguage(val prefValue: String, val flag: String, val shortName: S
 }
 
 data class UiText(
+    val shortcutTitle: String,
+    val shortcutDetail: String,
+    val shortcutPermission: String,
+    val shortcutUnavailable: String,
+    val shortcutStop: String,
+    val shortcutClose: String,
+    val shortcutOpen: String,
+    val shortcutReveal: String,
+    val activationTitle: String,
+    val activationHint: String,
+    val activationCode: String,
+    val activate: String,
+    val activationError: String,
+    val exit: String,
     val updateAvailableTitle: (String) -> String,
     val updateAvailableDetail: String,
     val link: String,
@@ -267,6 +281,20 @@ object TextCatalog {
     }
 
     private val tr = UiText(
+        shortcutTitle = "Yüzen kısayol",
+        shortcutDetail = "DJI Fly üzerinde Kontrol ekranına erişin. İkonu sürükleyin; kenara bırakarak gizleyin. Ok ikonu geri çıkarır. Kumanda yeniden başladığında DronePeak’i açın.",
+        shortcutPermission = "Diğer uygulamaların üzerinde gösterme izni gerekli. İzin verip DronePeak’e geri dönün.",
+        shortcutUnavailable = "Kısayol başlatılamadı. Kumanda ayarlarını ve üstte gösterme iznini kontrol edin.",
+        shortcutStop = "Kısayolu kapat",
+        shortcutClose = "Tamam",
+        shortcutOpen = "Kontrol ekranını aç",
+        shortcutReveal = "Yüzen ikonu göster",
+        activationTitle = "Sürüm aktivasyonu",
+        activationHint = "Bu sürümü açmak için DronePeak yetkilisinden güncel 6 haneli kodu isteyin. Kod 30 saniyede yenilenir. Kumandanın tarih ve saati doğru olmalıdır.",
+        activationCode = "Aktivasyon kodu",
+        activate = "Etkinleştir",
+        activationError = "Kod kabul edilmedi. Saati kontrol edip yeni kod isteyin.",
+        exit = "Çıkış",
         updateAvailableTitle = { "DronePeak-FCC v$it hazır" },
         updateAvailableDetail = "Yeni sürümü indirmek için Güncelle sekmesini aç.",
         link = "BAĞ",
@@ -402,6 +430,20 @@ object TextCatalog {
     )
 
     private val en = UiText(
+        shortcutTitle = "Floating shortcut",
+        shortcutDetail = "Access Control over DJI Fly. Drag the icon; drop at an edge to hide it. Tap the arrow to reveal it. Open DronePeak after restarting the controller.",
+        shortcutPermission = "Display over other apps permission is required. Grant it and return to DronePeak.",
+        shortcutUnavailable = "Shortcut could not start. Check controller settings and overlay permission.",
+        shortcutStop = "Turn off shortcut",
+        shortcutClose = "Done",
+        shortcutOpen = "Open Control",
+        shortcutReveal = "Reveal floating icon",
+        activationTitle = "Version activation",
+        activationHint = "Ask DronePeak for the current six-digit code to unlock this version. Codes change every 30 seconds. The controller date and time must be correct.",
+        activationCode = "Activation code",
+        activate = "Activate",
+        activationError = "Code not accepted. Check the clock and request a new code.",
+        exit = "Exit",
         updateAvailableTitle = { "DronePeak-FCC v$it ready" },
         updateAvailableDetail = "Open the Update tab to download the new version.",
         link = "LINK",

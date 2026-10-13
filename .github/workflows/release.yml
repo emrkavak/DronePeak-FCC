@@ -15,6 +15,7 @@ permissions:
   contents: write
 
 env:
+  DRONEPEAK_ACTIVATION_SECRET: ${{ secrets.DRONEPEAK_ACTIVATION_SECRET }}
   DRONEPEAK_REPO: ${{ github.repository }}
   SIGNING_KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_B64 }}
   SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
@@ -63,7 +64,7 @@ jobs:
           EXPECTED_VERSION="${RELEASE_TAG#v}"
           test -n "$APK" && test -f "$APK" && test -f "$METADATA"
           test "$(jq -r '.elements[0].versionName' "$METADATA")" = "$EXPECTED_VERSION"
-          test "$(jq -r '.elements[0].versionCode' "$METADATA")" = "35"
+          test "$(jq -r '.elements[0].versionCode' "$METADATA")" = "36"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | head -1 | grep -F "package: name='com.dronepeak.app'"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
 
@@ -80,6 +81,7 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: DronePeak ${{ github.event.inputs.tag || github.ref_name }}
           files: release/*.apk
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
           overwrite_files: true
           fail_on_unmatched_files: true
