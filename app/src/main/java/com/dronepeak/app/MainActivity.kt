@@ -65,6 +65,7 @@ private val Radius = RoundedCornerShape(12.dp)
 class MainActivity : ComponentActivity() {
     private val viewModel: FccViewModel by viewModels()
     private var controlRequest by mutableIntStateOf(0)
+    private var shortcutCloseRequested by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,7 +76,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.rgb(16, 19, 21))
         )
         setContent {
-            DronePeakTheme { AppRoot(viewModel, controlRequest) }
+            DronePeakTheme { AppRoot(viewModel, controlRequest, shortcutCloseRequested) { shortcutCloseRequested = false } }
         }
     }
 
@@ -97,6 +98,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun consumeControlIntent(intent: Intent) {
+        if (intent.getBooleanExtra("close_shortcut", false)) {
+            shortcutCloseRequested = true
+            intent.removeExtra("close_shortcut")
+        }
         if (intent.getBooleanExtra("open_control", false)) {
             controlRequest++
             intent.removeExtra("open_control")
@@ -144,50 +149,33 @@ internal class ControllerActions(private val delegate: FccViewModel?) {
  * The screen never assumes a controller's Android density from its pixel count.
  */
 @Composable
-private fun AppRoot(viewModel: FccViewModel, controlRequest: Int) {
+private fun AppRoot(viewModel: FccViewModel, controlRequest: Int, closeRequested: Boolean, dismissClose: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val shortcut by FloatingShortcutController.state.collectAsStateWithLifecycle()
     val actions = remember(viewModel) { ControllerActions(viewModel) }
+    val context = LocalContext.current
+    val ui = TextCatalog.ui(state.language)
+    var offerPermission by rememberSaveable { mutableStateOf(FloatingShortcutController.needsPermissionIntro(context)) }
     if (!state.isActivated) {
-        ActivationScreen(state, viewModel)
+        ActivationScreen(state, { viewModel.activate(it) }, { viewModel.clearActivationError() },
+            { viewModel.setLanguage(it) }, { (context as? android.app.Activity)?.finish() })
     } else {
-        LaunchedEffect(state.isActivated) {
-            FloatingShortcutController.ensureStarted(viewModel.getApplication())
-        }
         ControllerDashboard(state, actions, controlRequest = controlRequest)
     }
-}
-
-/** The dashboard is never composed until this installed version has been approved. */
-@Composable
-private fun ActivationScreen(state: AppState, viewModel: FccViewModel) {
-    val ui = TextCatalog.ui(state.language)
-    val context = LocalContext.current
-    var code by rememberSaveable { mutableStateOf("") }
-    androidx.activity.compose.BackHandler { (context as? android.app.Activity)?.finish() }
-    Box(Modifier.fillMaxSize().background(Graphite).windowInsetsPadding(WindowInsets.safeDrawing),
-        contentAlignment = Alignment.Center) {
-        Column(Modifier.widthIn(max = 480.dp).padding(16.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("DronePeak · ${BuildConfig.VERSION_NAME}", color = Ink)
-            Row {
-                AppLanguage.entries.forEach { language ->
-                    TextButton(onClick = { viewModel.setLanguage(language) }) { Text(language.shortName) }
-                }
-            }
-            Text(ui.activationTitle, style = MaterialTheme.typography.headlineSmall)
-            Text(ui.activationHint, color = Muted)
-            OutlinedTextField(value = code, onValueChange = { value ->
-                code = value.filter { it in '0'..'9' }.take(6)
-            }, label = { Text(ui.activationCode) }, singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
-                modifier = Modifier.fillMaxWidth(), shape = Radius)
-            if (state.activationFailed) Text(ui.activationError, color = Danger)
-            Button(onClick = { viewModel.activate(code); code = "" }, enabled = code.length == 6,
-                modifier = Modifier.fillMaxWidth().height(56.dp), shape = Radius) { Text(ui.activate) }
-            TextButton(onClick = { (context as? android.app.Activity)?.finish() },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(ui.exit) }
+    if (closeRequested) ShortcutCloseDialog(ui, dismissClose)
+    if (!closeRequested && offerPermission && shortcut.issue == ShortcutIssue.PERMISSION) {
+        val dismiss = {
+            offerPermission = false
+            FloatingShortcutController.markPermissionIntroSeen(context)
         }
+        AlertDialog(onDismissRequest = dismiss, shape = Radius,
+            title = { Text(ui.shortcutTitle) },
+            text = { Text(ui.shortcutPermission + "\n\n" + ui.shortcutDetail) },
+            confirmButton = { TextButton(onClick = {
+                dismiss()
+                FloatingShortcutController.requestPermission(context)
+            }) { Text(ui.shortcutGrant) } },
+            dismissButton = { TextButton(onClick = dismiss) { Text(ui.shortcutLater) } })
     }
 }
 
@@ -253,12 +241,13 @@ private fun Header(state: AppState, viewModel: ControllerActions, showShortcut: 
     HorizontalDivider(color = Line, thickness = 1.dp)
 }
 
-/** Keep the optional shortcut setting out of the fixed-height hardware action panels. */
+/** Available on activation and Control; reopening cannot undo an installation-scoped close. */
 @Composable
-private fun ShortcutSettings(ui: UiText) {
+internal fun ShortcutSettings(ui: UiText) {
     val context = LocalContext.current
     val shortcut by FloatingShortcutController.state.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
+    var closing by remember { mutableStateOf(false) }
     IconButton(onClick = { open = true }, modifier = Modifier.size(48.dp)) {
         Icon(Icons.AutoMirrored.Filled.OpenInNew, ui.shortcutTitle, Modifier.size(20.dp),
             tint = if (shortcut.enabled) Link else Muted)
@@ -268,28 +257,37 @@ private fun ShortcutSettings(ui: UiText) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(ui.shortcutDetail)
-                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(ui.shortcutTitle, modifier = Modifier.weight(1f))
-                    Switch(checked = shortcut.enabled, onCheckedChange = {
-                        FloatingShortcutController.setEnabled(context, it)
-                    }, modifier = Modifier.semantics { contentDescription = ui.shortcutTitle })
-                }
-                val reason = when (shortcut.issue) {
+                Text(when (shortcut.issue) {
+                    ShortcutIssue.CLOSED -> ui.shortcutClosed
                     ShortcutIssue.PERMISSION -> ui.shortcutPermission
                     ShortcutIssue.UNAVAILABLE -> ui.shortcutUnavailable
-                    ShortcutIssue.ACTIVATION -> ui.activationTitle
-                    else -> null
-                }
-                reason?.let { Text(it, color = Muted) }
-                if (shortcut.issue != ShortcutIssue.NONE) TextButton(onClick = {
-                    FloatingShortcutController.setEnabled(context, true)
+                    ShortcutIssue.NONE -> if (shortcut.enabled) ui.shortcutActive else ui.working
+                }, color = Muted)
+                if (shortcut.issue == ShortcutIssue.PERMISSION) TextButton(onClick = {
+                    FloatingShortcutController.requestPermission(context)
+                }) { Text(ui.shortcutGrant) }
+                if (shortcut.issue == ShortcutIssue.UNAVAILABLE) TextButton(onClick = {
+                    FloatingShortcutController.ensureStarted(context)
                 }) { Text(ui.retry) }
-                // Permission requests keep a saved intent to enable; users can cancel that intent too.
-                if (!shortcut.enabled && shortcut.issue != ShortcutIssue.NONE) TextButton(onClick = {
-                    FloatingShortcutController.setEnabled(context, false)
-                }) { Text(ui.shortcutStop) }
+                if (shortcut.issue != ShortcutIssue.CLOSED) TextButton(onClick = { open = false; closing = true }) {
+                    Text(ui.shortcutStop)
+                }
             }
         }, confirmButton = { TextButton(onClick = { open = false }) { Text(ui.shortcutClose) } })
+    if (closing) ShortcutCloseDialog(ui) { closing = false }
+}
+
+@Composable
+private fun ShortcutCloseDialog(ui: UiText, dismiss: () -> Unit) {
+    val context = LocalContext.current
+    var failed by remember { mutableStateOf(false) }
+    AlertDialog(onDismissRequest = dismiss, shape = Radius,
+        title = { Text(ui.shortcutCloseTitle) },
+        text = { Column { Text(ui.shortcutCloseWarning); if (failed) Text(ui.shortcutUnavailable, color = Danger) } },
+        confirmButton = { TextButton(onClick = {
+            if (FloatingShortcutController.closeForInstallation(context)) dismiss() else failed = true
+        }) { Text(ui.shortcutStop) } },
+        dismissButton = { TextButton(onClick = dismiss) { Text(ui.shortcutCancel) } })
 }
 
 @Composable
